@@ -1,0 +1,12 @@
+{
+  "domain": "ha_geist",
+  "name": "HA Geist",
+  "codeowners": [
+    "@arikalish"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/arikalish/ha_geist",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/arikalish/ha_geist/issues",
+  "version": "0.1.0"
+}

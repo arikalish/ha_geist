@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<server host="Entertainment Center RSM" address="192.168.123.199" name="RSM" owl-version="1075" product-version="3.16.3" pversion="2.0" mac-address="00:19:85:E0:0E:DA" datetime="Sat, 02/14/26 16:06:41" company="Geist" company-url="http://www.geistglobal.com" support-email="support@geistglobal.com" support-phone="800.432.3219" support-phone-2="+1.402.474.3400" console-id="chh" tempunit="F" config="M1" uptime="62062994" demo-mode="N" mp-rev="O" link-speed="10" link-duplex="half-duplex" link-time="7967131">
+	<cameras>
+
+	</cameras>
+	<devices>
+		<device id="01D9BCD512000084" name="Entertainment Center RSM" type="Clim-Pow-THLFSA3-DB" available="1" index="0">
+			<field key="TempC" value="25.00" niceName="Temperature (C)" min="-40.0" max="123.8" type="0" order="0"/>
+			<field key="TempF" value="77.01" niceName="Temperature (F)" min="-40.0" max="254.8" type="2" order="1"/>
+			<field key="Humidity" value="14" niceName="Relative Humidity" min="0.0" max="100.0" type="2" order="2"/>
+			<field key="DewPtC" value="-4.3" niceName="Dew Point (C)" min="-40.0" max="123.8" type="0" order="26"/>
+			<field key="DewPtF" value="24.1" niceName="Dew Point (F)" min="-40.0" max="254.8" type="2" order="27"/>
+			<field key="Light" value="4" niceName="Light Level" min="1.0" max="100.0" type="2" order="3"/>
+			<field key="Airflow" value="85" niceName="Air Flow" min="0.0" max="100.0" type="2" order="4"/>
+			<field key="Sound" value="0" niceName="Sound Level" min="0.0" max="99.0" type="2" order="5"/>
+			<field key="IO1" value="98" niceName="IO-1" min="0.0" max="99.0" type="2" order="6"/>
+			<field key="IO2" value="98" niceName="IO-2" min="0.0" max="99.0" type="2" order="7"/>
+			<field key="IO3" value="99" niceName="IO-3" min="0.0" max="99.0" type="2" order="8"/>
+			<field key="Volts" value="124.6" niceName="Volts" min="0.0" max="275.0" type="2" order="9"/>
+			<field key="Volt-Pk" value="125.2" niceName="Volts (Peak)" min="0.0" max="275.0" type="2" order="10"/>
+			<field key="Amps-A" value="0.3" niceName="Amps" min="0.0" max="99.0" type="2" order="11"/>
+			<field key="Amps-Pk-A" value="0.4" niceName="Amps (Peak)" min="0.0" max="99.0" type="2" order="12"/>
+			<field key="RealPower-A" value="30.0" niceName="Real Power" min="0.0" max="9999.0" type="2" order="13"/>
+			<field key="ApPower-A" value="37.3" niceName="Apparent Power" min="0.0" max="9999.0" type="2" order="14"/>
+			<field key="Pwr-Factor%-A" value="80.2" niceName="Power Factor" min="0.0" max="100.0" type="2" order="15"/>
+			<buzzers>
+				<buzzer action-idx="10"/>
+			</buzzers>
+		</device>
+		<device id="EA00000132301A28" name="Temp Sensor" type="tempSensor" available="1" index="1">
+			<field key="TempC" value="24.81" niceName="Temperature (C)" min="-40.0" max="123.8" type="0" order="0"/>
+			<field key="TempF" value="76.66" niceName="Temperature (F)" min="-40.0" max="254.8" type="2" order="1"/>
+		</device>
+	</devices>
+	<alarms>
+
+	</alarms>
+</server>
