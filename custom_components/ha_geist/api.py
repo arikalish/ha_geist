@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import xml.etree.ElementTree as ET
 from typing import Any
+from .types import ParsedData, Device, Field
 
 import aiohttp
 import async_timeout
@@ -85,16 +86,26 @@ class IntegrationBlueprintApiClient:
                 text = await response.text()
 
                 # Parse XML into a simple Python structure
-                parsed = {"devices": [], "raw": text}
+                parsed: ParsedData = {"devices": [], "raw": text}
                 try:
                     root = ET.fromstring(text)
+                    # server host for logging/optional use
+                    server_host = root.attrib.get("host")
                     # Look for devices container
                     devices_container = root.find("devices")
                     if devices_container is not None:
+                        # Typed list of Device objects
+                        devices_list: list[Device] = []
+
                         for device_elem in devices_container.findall("device"):
-                            # Start with device attributes
-                            dev = dict(device_elem.attrib)
-                            # Use the device's own `name` attribute as provided in XML
+                            # Build a Device dataclass from attributes
+                            d = Device(
+                                id=device_elem.attrib.get("id", ""),
+                                name=device_elem.attrib.get("name", ""),
+                                type=device_elem.attrib.get("type"),
+                                available=device_elem.attrib.get("available"),
+                                index=device_elem.attrib.get("index"),
+                            )
 
                             # Parse child elements (e.g., <field .../>)
                             for child in device_elem:
@@ -103,19 +114,17 @@ class IntegrationBlueprintApiClient:
                                     value = child.attrib.get("value")
                                     nice = child.attrib.get("niceName")
                                     if key:
-                                        # Store both the raw value and the nicename
-                                        dev.setdefault("fields", {})[key] = {
-                                            "value": value,
-                                            "niceName": nice,
-                                        }
+                                        d.fields[key] = Field(
+                                            key=key, value=value, niceName=nice
+                                        )
                                 else:
-                                    dev[child.tag] = child.text
+                                    # other child elements stored as attributes on dataclass if needed
+                                    setattr(d, child.tag, child.text)
 
-                            parsed["devices"].append(dev)
-                    else:
-                        # Generic mapping for top-level elements when no devices container
-                        for child in root:
-                            parsed.setdefault(child.tag, child.text)
+                            devices_list.append(d)
+
+                        # store typed devices list in parsed result
+                        parsed["devices"] = devices_list
                 except ET.ParseError:
                     # Keep raw text if parsing fails
                     pass

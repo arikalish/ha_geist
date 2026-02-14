@@ -14,6 +14,7 @@ from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN
 from .entity import IntegrationBlueprintEntity
+from .types import Device, Field
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -31,28 +32,27 @@ async def async_setup_entry(
     """Set up sensors from parsed XML data."""
     coordinator = entry.runtime_data.coordinator
     data = coordinator.data or {}
-    devices = data.get("devices") or []
+    devices: list[Device] = data.get("devices") or []
 
     entities: list[FieldSensor] = []
     for dev in devices:
-        device_id = dev.get("id")
-        device_name = dev.get("name")
-        fields = dev.get("fields") or {}
-        # Each field value may be a dict with `value` and `niceName` keys
-        for key, value in fields.items():
-            if isinstance(value, dict):
-                nice = value.get("niceName") or key
+        device_id = dev.id
+        device_name = dev.name
+        fields = dev.fields or {}
+        for key, field_obj in fields.items():
+            if isinstance(field_obj, Field):
+                nice = field_obj.niceName or ""
             else:
-                nice = key
-        entities.append(
-            FieldSensor(
-                coordinator=coordinator,
-                device_id=device_id or "",
-                device_name=device_name or "",
-                field_key=key,
-                nice_name=nice,
+                nice = key or ""
+            entities.append(
+                FieldSensor(
+                    coordinator=coordinator,
+                    device_id=device_id or "",
+                    device_name=device_name or "",
+                    field_key=key,
+                    nice_name=nice,
+                )
             )
-        )
 
     if entities:
         async_add_entities(entities)
@@ -88,12 +88,11 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
     def native_value(self) -> str | None:
         """Return the latest value for this field from coordinator data."""
         data = self.coordinator.data or {}
-        devices = data.get("devices") or []
+        devices: list[Device] = data.get("devices") or []
         for dev in devices:
-            if dev.get("id") == self._device_id:
-                fields = dev.get("fields") or {}
-                entry = fields.get(self._field_key)
-                if isinstance(entry, dict):
-                    return entry.get("value")
+            if dev.id == self._device_id:
+                entry = dev.fields.get(self._field_key)
+                if isinstance(entry, Field):
+                    return entry.value
                 return entry
         return None
