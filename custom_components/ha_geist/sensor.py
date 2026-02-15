@@ -105,9 +105,10 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             icon = "mdi:power-socket-us"
         if icon:
             self._attr_icon = icon
-        # Set entity_id to a slugified version of the field key so object_id == key
+        # Set entity_id to a slugified version of the device id and field key
         safe_key = re.sub(r"[^a-z0-9_]", "_", (field_key or "").lower())
-        self.entity_id = f"{DOMAIN}.{safe_key}"
+        safe_device = re.sub(r"[^a-z0-9_]", "_", (device_id or "").lower())
+        self.entity_id = f"{DOMAIN}.{safe_device}_{safe_key}"
 
     @property
     def native_value(self) -> str | None:
