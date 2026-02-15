@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import SensorEntity
+import re
 from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN
@@ -96,6 +97,9 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
 
         # Unit of measurement
         self._attr_native_unit_of_measurement = unit
+        # Set entity_id to a slugified version of the field key so object_id == key
+        safe_key = re.sub(r"[^a-z0-9_]", "_", (field_key or "").lower())
+        self.entity_id = f"{DOMAIN}.{safe_key}"
 
     @property
     def native_value(self) -> str | None:
