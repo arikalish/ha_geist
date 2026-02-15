@@ -121,16 +121,10 @@ class IntegrationBlueprintApiClient:
                                     value = child.attrib.get("value")
                                     nice = child.attrib.get("niceName")
                                     if key:
-                                        # Map known keys to Home Assistant units
-                                        unit: str | None = None
-                                        if key == "TOTAL" or key.startswith("CT"):
-                                            unit = "A"
-
                                         d.fields[key] = Field(
                                             key=key,
                                             value=value,
                                             niceName=nice,
-                                            unit=unit,
                                         )
                                 else:
                                     # other child elements stored as attributes on dataclass if needed

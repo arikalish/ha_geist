@@ -45,10 +45,9 @@ async def async_setup_entry(
         for key, field_obj in fields.items():
             if isinstance(field_obj, Field):
                 nice = field_obj.niceName or "Unknown"
-                unit = field_obj.unit
             else:
                 nice = key or "Unknown"
-                unit = None
+
             entities.append(
                 FieldSensor(
                     coordinator=coordinator,
@@ -58,7 +57,6 @@ async def async_setup_entry(
                     model=model,
                     field_key=key,
                     nice_name=nice,
-                    unit=unit,
                 )
             )
 
@@ -78,7 +76,6 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         model: str | None,
         field_key: str,
         nice_name: str,
-        unit: str | None = None,
     ) -> None:
         """Initialize the field sensor."""
         super().__init__(coordinator)
@@ -96,15 +93,8 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         )
 
         # Unit of measurement
-        self._attr_native_unit_of_measurement = unit
-        # Default icons for specific keys
-        icon = None
-        if field_key == "TOTAL":
-            icon = "mdi:power-plug"
-        elif field_key.startswith("CT"):
-            icon = "mdi:power-socket-us"
-        if icon:
-            self._attr_icon = icon
+        self._attr_native_unit_of_measurement = self.unit_for_field_key(field_key)
+        self._attr_icon = self.icon_for_field_key(field_key)
         # Set entity_id to a slugified version of the device id and field key
         safe_key = re.sub(r"[^a-z0-9_]", "_", (field_key or "").lower())
         safe_device = re.sub(r"[^a-z0-9_]", "_", (device_id or "").lower())
@@ -121,4 +111,58 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
                 if isinstance(entry, Field):
                     return entry.value
                 return entry
+        return None
+
+    @staticmethod
+    def icon_for_field_key(key: str) -> str | None:  # noqa: PLR0911
+        """Return an icon based on the field key."""
+        if key == "TOTAL":
+            return "mdi:power-plug"
+        if key.startswith("CT"):
+            return "mdi:power-socket-us"
+        if key in {"TempC", "TempF"}:
+            return "mdi:thermometer"
+        if key in {"DewPtC", "DewPtF"}:
+            return "mdi:thermometer-water"
+        if key == "Humidity":
+            return "mdi:water-percent"
+        if key.startswith("Volts"):
+            return "mdi:sine-wave"
+        if key.startswith("Amps"):
+            return "mdi:current-ac"
+        if key.startswith("Pwr-Factor"):
+            return "mdi:percent-circle"
+        return None
+
+    @staticmethod
+    def unit_for_field_key(key: str) -> str | None:  # noqa: PLR0911
+        """
+        Return unit of measurement for a given field key.
+
+        Examples:
+        - "TOTAL" and keys starting with "CT" -> "A"
+        - Temperature keys -> "°C" or "°F"
+        - Voltage -> "V"
+        - Power -> "W" or "VA"
+        - Percentages -> "%"
+
+        """
+        if key == "TOTAL" or key.startswith("CT"):
+            return "A"
+        if key in {"TempC", "DewPtC"}:
+            return "°C"
+        if key in {"TempF", "DewPtF"}:
+            return "°F"
+        if key == "Humidity":
+            return "%"
+        if key.startswith("Volts"):
+            return "V"
+        if key.startswith("Amps"):
+            return "A"
+        if key.startswith("RealPower"):
+            return "W"
+        if key.startswith("ApPower"):
+            return "VA"
+        if key.startswith("Pwr-Factor"):
+            return "%"
         return None
