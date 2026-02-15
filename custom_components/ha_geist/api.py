@@ -48,8 +48,8 @@ class IntegrationBlueprintApiClient:
 
     def __init__(
         self,
-        username: str,
-        password: str,
+        username: str | None,
+        password: str | None,
         session: aiohttp.ClientSession,
         base_url: str | None = None,
     ) -> None:
@@ -77,10 +77,15 @@ class IntegrationBlueprintApiClient:
 
         try:
             async with async_timeout.timeout(15):
+                # Only include auth if both username and password were provided
+                auth = None
+                if self._username and self._password:
+                    auth = aiohttp.BasicAuth(self._username, self._password)
+
                 response = await self._session.request(
                     method="GET",
                     url=url,
-                    auth=aiohttp.BasicAuth(self._username, self._password),
+                    auth=auth,
                 )
                 _verify_response_or_raise(response)
                 text = await response.text()
