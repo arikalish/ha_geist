@@ -97,6 +97,14 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
 
         # Unit of measurement
         self._attr_native_unit_of_measurement = unit
+        # Default icons for specific keys
+        icon = None
+        if field_key == "TOTAL":
+            icon = "mdi:power-plug"
+        elif field_key.startswith("CT"):
+            icon = "mdi:power-socket-us"
+        if icon:
+            self._attr_icon = icon
         # Set entity_id to a slugified version of the field key so object_id == key
         safe_key = re.sub(r"[^a-z0-9_]", "_", (field_key or "").lower())
         self.entity_id = f"{DOMAIN}.{safe_key}"
