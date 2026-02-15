@@ -126,12 +126,20 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             return "mdi:thermometer-water"
         if key == "Humidity":
             return "mdi:water-percent"
-        if key.startswith("Volts"):
+        if key.startswith("Volt"):
             return "mdi:sine-wave"
         if key.startswith("Amps"):
             return "mdi:current-ac"
         if key.startswith("Pwr-Factor"):
             return "mdi:percent-circle"
+        if key == "Sound":
+            return "mdi:volume-high"
+        if key == "Airflow":
+            return "mdi:weather-dust"
+        if key.startswith("IO"):
+            return "mdi:chart-line-variant"
+        if key == "Light":
+            return "mdi:lightbulb-on-50"
         return None
 
     @staticmethod
@@ -155,7 +163,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             return "°F"
         if key == "Humidity":
             return "%"
-        if key.startswith("Volts"):
+        if key.startswith("Volt"):
             return "V"
         if key.startswith("Amps"):
             return "A"
