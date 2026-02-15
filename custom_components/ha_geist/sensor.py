@@ -38,17 +38,21 @@ async def async_setup_entry(
     for dev in devices:
         device_id = dev.id
         device_name = dev.name
+        manufacturer = dev.manufacturer if hasattr(dev, "manufacturer") else None
+        model = dev.type if hasattr(dev, "type") else None
         fields = dev.fields or {}
         for key, field_obj in fields.items():
             if isinstance(field_obj, Field):
-                nice = field_obj.niceName or ""
+                nice = field_obj.niceName or "Unknown"
             else:
-                nice = key or ""
+                nice = key or "Unknown"
             entities.append(
                 FieldSensor(
                     coordinator=coordinator,
                     device_id=device_id or "",
                     device_name=device_name or "",
+                    manufacturer=manufacturer,
+                    model=model,
                     field_key=key,
                     nice_name=nice,
                 )
@@ -66,6 +70,8 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         coordinator: BlueprintDataUpdateCoordinator,
         device_id: str,
         device_name: str,
+        manufacturer: str | None,
+        model: str | None,
         field_key: str,
         nice_name: str,
     ) -> None:
@@ -82,6 +88,8 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device_id)},
             name=device_name or None,
+            manufacturer=manufacturer,
+            model=model,
         )
 
     @property

@@ -89,8 +89,9 @@ class IntegrationBlueprintApiClient:
                 parsed: ParsedData = {"devices": [], "raw": text}
                 try:
                     root = ET.fromstring(text)
-                    # server host for logging/optional use
+                    # server host and company for logging/optional use
                     server_host = root.attrib.get("host")
+                    server_company = root.attrib.get("company")
                     # Look for devices container
                     devices_container = root.find("devices")
                     if devices_container is not None:
@@ -105,6 +106,7 @@ class IntegrationBlueprintApiClient:
                                 type=device_elem.attrib.get("type"),
                                 available=device_elem.attrib.get("available"),
                                 index=device_elem.attrib.get("index"),
+                                manufacturer=server_company,
                             )
 
                             # Parse child elements (e.g., <field .../>)

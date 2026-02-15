@@ -29,4 +29,5 @@ class Device:
     type: Optional[str] = None
     available: Optional[str] = None
     index: Optional[str] = None
+    manufacturer: Optional[str] = None
     fields: dict[str, Field] = field(default_factory=dict)
