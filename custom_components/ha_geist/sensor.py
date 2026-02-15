@@ -7,10 +7,18 @@ element using its `name` attribute.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import SensorEntity
-import re
+from homeassistant.const import (
+    PERCENTAGE,
+    UnitOfApparentPower,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfPower,
+    UnitOfTemperature,
+)
 from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN
@@ -155,22 +163,18 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         - Percentages -> "%"
 
         """
-        if key == "TOTAL" or key.startswith("CT"):
-            return "A"
+        if key == "TOTAL" or key.startswith(("CT", "Amps")):
+            return UnitOfElectricCurrent.AMPERE
         if key in {"TempC", "DewPtC"}:
-            return "°C"
+            return UnitOfTemperature.CELSIUS
         if key in {"TempF", "DewPtF"}:
-            return "°F"
-        if key == "Humidity":
-            return "%"
+            return UnitOfTemperature.FAHRENHEIT
+        if key == "Humidity" or key.startswith("Pwr-Factor"):
+            return PERCENTAGE
         if key.startswith("Volt"):
-            return "V"
-        if key.startswith("Amps"):
-            return "A"
+            return UnitOfElectricPotential.VOLT
         if key.startswith("RealPower"):
-            return "W"
+            return UnitOfPower.WATT
         if key.startswith("ApPower"):
-            return "VA"
-        if key.startswith("Pwr-Factor"):
-            return "%"
+            return UnitOfApparentPower.VOLT_AMPERE
         return None
