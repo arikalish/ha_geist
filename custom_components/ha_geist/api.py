@@ -94,9 +94,12 @@ class IntegrationBlueprintApiClient:
                 parsed: ParsedData = {"devices": [], "raw": text}
                 try:
                     root = ET.fromstring(text)
-                    # server host and company for logging/optional use
+                    # server host, company and software version for logging/optional use
                     server_host = root.attrib.get("host")
                     server_company = root.attrib.get("company")
+                    server_sw_version = root.attrib.get("version") or root.attrib.get(
+                        "product-version"
+                    )
                     # Look for devices container
                     devices_container = root.find("devices")
                     if devices_container is not None:
@@ -112,6 +115,8 @@ class IntegrationBlueprintApiClient:
                                 available=device_elem.attrib.get("available"),
                                 index=device_elem.attrib.get("index"),
                                 manufacturer=server_company,
+                                sw_version=server_sw_version,
+                                serial_number=device_elem.attrib.get("id"),
                             )
 
                             # Parse child elements (e.g., <field .../>)

@@ -30,4 +30,6 @@ class Device:
     available: Optional[str] = None
     index: Optional[str] = None
     manufacturer: Optional[str] = None
+    sw_version: Optional[str] = None
+    serial_number: Optional[str] = None
     fields: dict[str, Field] = field(default_factory=dict)

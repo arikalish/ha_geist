@@ -82,6 +82,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         device_name: str,
         manufacturer: str | None,
         model: str | None,
+        # sw_version: str | None,
         field_key: str,
         nice_name: str,
     ) -> None:
@@ -98,6 +99,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             name=device_name or None,
             manufacturer=manufacturer,
             model=model,
+            # sw_version=sw_version,
         )
 
         # Unit of measurement
