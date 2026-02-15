@@ -44,8 +44,10 @@ async def async_setup_entry(
         for key, field_obj in fields.items():
             if isinstance(field_obj, Field):
                 nice = field_obj.niceName or "Unknown"
+                unit = field_obj.unit
             else:
                 nice = key or "Unknown"
+                unit = None
             entities.append(
                 FieldSensor(
                     coordinator=coordinator,
@@ -55,6 +57,7 @@ async def async_setup_entry(
                     model=model,
                     field_key=key,
                     nice_name=nice,
+                    unit=unit,
                 )
             )
 
@@ -74,16 +77,15 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         model: str | None,
         field_key: str,
         nice_name: str,
+        unit: str | None = None,
     ) -> None:
         """Initialize the field sensor."""
         super().__init__(coordinator)
         self._device_id = device_id
         self._field_key = field_key
         self._attr_name = nice_name
-        # Make unique id by combining entry id, device id and field key
-        self._attr_unique_id = (
-            f"{coordinator.config_entry.entry_id}_{device_id}_{field_key}"
-        )
+        # Make unique id per entity using the device `id` and field key
+        self._attr_unique_id = f"{device_id}_{field_key}"
         # DeviceInfo for grouping sensors under a Home Assistant device
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device_id)},
@@ -91,6 +93,9 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             manufacturer=manufacturer,
             model=model,
         )
+
+        # Unit of measurement
+        self._attr_native_unit_of_measurement = unit
 
     @property
     def native_value(self) -> str | None:

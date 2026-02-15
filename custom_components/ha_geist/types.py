@@ -20,6 +20,7 @@ class Field:
     key: str
     value: Optional[str]
     niceName: Optional[str]
+    unit: Optional[str] = None
 
 
 @dataclass
