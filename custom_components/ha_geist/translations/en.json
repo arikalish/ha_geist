@@ -2,15 +2,17 @@
     "config": {
         "step": {
             "user": {
-                "description": "If you need help with the configuration have a look here: https://github.com/arikalish/ha_geist",
+                "title": "Connect to a Geist device",
+                "description": "Enter the device host and credentials. The integration detects whether the device uses the XML or JSON API.",
                 "data": {
+                    "url": "Device URL",
                     "username": "Username",
                     "password": "Password"
                 }
             }
         },
         "error": {
-            "auth": "Username/Password is wrong.",
+            "auth": "The username or password is wrong, or the account lacks the required permissions.",
             "connection": "Unable to connect to the server.",
             "unknown": "Unknown error occurred."
         },

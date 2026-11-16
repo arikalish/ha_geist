@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from homeassistant.loader import Integration
 
     from .api import IntegrationBlueprintApiClient
+    from .api_json import GeistJsonApiClient
     from .coordinator import BlueprintDataUpdateCoordinator
 
 
@@ -20,6 +21,6 @@ type IntegrationBlueprintConfigEntry = ConfigEntry[IntegrationBlueprintData]
 class IntegrationBlueprintData:
     """Data for the Blueprint integration."""
 
-    client: IntegrationBlueprintApiClient
+    client: IntegrationBlueprintApiClient | GeistJsonApiClient
     coordinator: BlueprintDataUpdateCoordinator
     integration: Integration

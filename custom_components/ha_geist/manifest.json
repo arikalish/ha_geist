@@ -5,6 +5,14 @@
     "@arikalish"
   ],
   "config_flow": true,
+  "dhcp": [
+    {
+      "macaddress": "00:19:85.*"
+    },
+    {
+      "macaddress": "00:04:A3.*"
+    }
+  ],
   "documentation": "https://github.com/arikalish/ha_geist",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/arikalish/ha_geist/issues",

@@ -5,12 +5,12 @@ from __future__ import annotations
 import socket
 import xml.etree.ElementTree as ET
 from typing import Any
-from .types import ParsedData, Device, Field
 
 import aiohttp
 import async_timeout
 
 from .const import LOGGER
+from .types import Device, Field, ParsedData
 
 
 class IntegrationBlueprintApiClientError(Exception):
@@ -87,75 +87,69 @@ class IntegrationBlueprintApiClient:
                     url=url,
                     auth=auth,
                 )
+
+                # If the response indicates auth problems, raise immediately
+                if response.status in (401, 403):
+                    _verify_response_or_raise(response)
+
+                # Helper: parse XML into ParsedData
+                def _parse_xml(text_to_parse: str) -> ParsedData:
+                    root = ET.fromstring(text_to_parse)
+                    server_company_local = root.attrib.get("company")
+                    server_sw_version_local = root.attrib.get(
+                        "version"
+                    ) or root.attrib.get("product-version")
+                    parsed_local: ParsedData = {"devices": [], "raw": text_to_parse}
+                    devices_container = root.find("devices")
+                    if devices_container is None:
+                        return parsed_local
+
+                    devices_list: list[Device] = []
+                    for device_elem in devices_container.findall("device"):
+                        d = Device(
+                            id=device_elem.attrib.get("id", ""),
+                            name=device_elem.attrib.get("name", ""),
+                            type=device_elem.attrib.get("type"),
+                            available=device_elem.attrib.get("available"),
+                            index=device_elem.attrib.get("index"),
+                            manufacturer=server_company_local,
+                            sw_version=server_sw_version_local,
+                            serial_number=(
+                                device_elem.attrib.get("id")
+                                if device_elem.attrib.get("index") == "0"
+                                else None
+                            ),
+                        )
+
+                        for child in device_elem:
+                            if child.tag.lower() == "field":
+                                key = child.attrib.get("key")
+                                value = child.attrib.get("value")
+                                nice = child.attrib.get("niceName")
+                                if key:
+                                    d.fields[key] = Field(
+                                        key=key, value=value, niceName=nice
+                                    )
+                            else:
+                                setattr(d, child.tag, child.text)
+
+                        devices_list.append(d)
+
+                    parsed_local["devices"] = devices_list
+                    return parsed_local
+
                 _verify_response_or_raise(response)
                 text = await response.text()
-
-                # Parse XML into a simple Python structure
-                parsed: ParsedData = {"devices": [], "raw": text}
-                try:
-                    root = ET.fromstring(text)
-                    # server host, company and software version for logging/optional use
-                    server_host = root.attrib.get("host")
-                    server_company = root.attrib.get("company")
-                    server_sw_version = root.attrib.get("version") or root.attrib.get(
-                        "product-version"
-                    )
-                    # Look for devices container
-                    devices_container = root.find("devices")
-                    if devices_container is not None:
-                        # Typed list of Device objects
-                        devices_list: list[Device] = []
-
-                        for device_elem in devices_container.findall("device"):
-                            # Build a Device dataclass from attributes
-                            d = Device(
-                                id=device_elem.attrib.get("id", ""),
-                                name=device_elem.attrib.get("name", ""),
-                                type=device_elem.attrib.get("type"),
-                                available=device_elem.attrib.get("available"),
-                                index=device_elem.attrib.get("index"),
-                                manufacturer=server_company,
-                                sw_version=server_sw_version,
-                                serial_number=device_elem.attrib.get("id"),
-                            )
-
-                            # Parse child elements (e.g., <field .../>)
-                            for child in device_elem:
-                                if child.tag.lower() == "field":
-                                    key = child.attrib.get("key")
-                                    value = child.attrib.get("value")
-                                    nice = child.attrib.get("niceName")
-                                    if key:
-                                        d.fields[key] = Field(
-                                            key=key,
-                                            value=value,
-                                            niceName=nice,
-                                        )
-                                else:
-                                    # other child elements stored as attributes on dataclass if needed
-                                    setattr(d, child.tag, child.text)
-
-                            devices_list.append(d)
-
-                        # store typed devices list in parsed result
-                        parsed["devices"] = devices_list
-                except ET.ParseError:
-                    # Keep raw text if parsing fails
-                    pass
-
-                # Log summary information after initial parse
-                try:
-                    LOGGER.debug(
-                        "Parsed data.xml: server_host=%s, devices=%d",
-                        server_host,
-                        len(parsed.get("devices", [])),
-                    )
-                except Exception:
-                    # Avoid failing parsing/logging for unexpected logging errors
-                    pass
-
+                parsed = _parse_xml(text)
+                LOGGER.debug(
+                    "Parsed data.xml: server_host=%s, devices=%d",
+                    ET.fromstring(text).attrib.get("host"),
+                    len(parsed.get("devices", [])),
+                )
                 return parsed
 
+        except IntegrationBlueprintApiClientAuthenticationError:
+            raise
         except TimeoutError as exception:
             msg = f"Timeout error fetching information - {exception}"
             raise IntegrationBlueprintApiClientCommunicationError(

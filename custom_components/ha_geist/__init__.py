@@ -10,12 +10,13 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, CONF_URL, Platform
+from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, Platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
 from .api import IntegrationBlueprintApiClient
-from .const import DOMAIN, LOGGER
+from .api_json import GeistJsonApiClient
+from .const import API_TYPE_JSON, API_TYPE_XML, CONF_API_TYPE, DOMAIN, LOGGER
 from .coordinator import BlueprintDataUpdateCoordinator
 from .data import IntegrationBlueprintData
 
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
 
     from .data import IntegrationBlueprintConfigEntry
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
 
 
 # https://developers.home-assistant.io/docs/config_entries_index/#setting-up-an-entry
@@ -37,10 +38,16 @@ async def async_setup_entry(
         hass=hass,
         logger=LOGGER,
         name=DOMAIN,
-        update_interval=timedelta(hours=1),
+        update_interval=timedelta(seconds=30),
+    )
+    api_type = entry.data.get(CONF_API_TYPE, API_TYPE_XML)
+    client_type = (
+        GeistJsonApiClient
+        if api_type == API_TYPE_JSON
+        else IntegrationBlueprintApiClient
     )
     entry.runtime_data = IntegrationBlueprintData(
-        client=IntegrationBlueprintApiClient(
+        client=client_type(
             username=entry.data.get(CONF_USERNAME),
             password=entry.data.get(CONF_PASSWORD),
             session=async_get_clientsession(hass),

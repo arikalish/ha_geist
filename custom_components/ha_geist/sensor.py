@@ -7,6 +7,7 @@ element using its `name` attribute.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import TYPE_CHECKING
 
@@ -19,11 +20,12 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
 
-from .const import DOMAIN
+from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
 from .entity import IntegrationBlueprintEntity
-from .types import Device, Field
+from .types import Device, Field, JsonDevice, JsonParsedData, JsonSensor
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -40,8 +42,21 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensors from parsed XML data."""
     coordinator = entry.runtime_data.coordinator
-    data = coordinator.data or {}
-    devices: list[Device] = data.get("devices") or []
+    data = coordinator.data
+    if entry.data.get(CONF_API_TYPE) == API_TYPE_JSON:
+        if not isinstance(data, JsonParsedData):
+            message = "The JSON API returned unexpected data"
+            raise HomeAssistantError(message)
+        async_add_entities(
+            [
+                JsonSensorEntity(coordinator, device, sensor)
+                for device in data.devices
+                for sensor in device.sensors
+            ]
+        )
+        return
+
+    devices: list[Device] = data.get("devices", []) if data else []
 
     entities: list[FieldSensor] = []
     for dev in devices:
@@ -63,6 +78,7 @@ async def async_setup_entry(
                     device_name=device_name or "",
                     manufacturer=manufacturer,
                     model=model,
+                    serial_number=dev.serial_number,
                     field_key=key,
                     nice_name=nice,
                 )
@@ -82,7 +98,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         device_name: str,
         manufacturer: str | None,
         model: str | None,
-        # sw_version: str | None,
+        serial_number: str | None,
         field_key: str,
         nice_name: str,
     ) -> None:
@@ -99,6 +115,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             name=device_name or None,
             manufacturer=manufacturer,
             model=model,
+            serial_number=serial_number,
             # sw_version=sw_version,
         )
 
@@ -108,19 +125,28 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         # Set entity_id to a slugified version of the device id and field key
         safe_key = re.sub(r"[^a-z0-9_]", "_", (field_key or "").lower())
         safe_device = re.sub(r"[^a-z0-9_]", "_", (device_id or "").lower())
-        self.entity_id = f"{DOMAIN}.{safe_device}_{safe_key}"
+        self.entity_id = f"sensor.{safe_device}_{safe_key}"
 
     @property
-    def native_value(self) -> str | None:
+    def native_value(self) -> float | str | None:
         """Return the latest value for this field from coordinator data."""
         data = self.coordinator.data or {}
         devices: list[Device] = data.get("devices") or []
         for dev in devices:
             if dev.id == self._device_id:
                 entry = dev.fields.get(self._field_key)
-                if isinstance(entry, Field):
-                    return entry.value
-                return entry
+                value = entry.value if isinstance(entry, Field) else entry
+                if value is None:
+                    return None
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    return (
+                        None
+                        if self._attr_native_unit_of_measurement is not None
+                        else value
+                    )
+                return numeric_value if math.isfinite(numeric_value) else None
         return None
 
     @staticmethod
@@ -179,4 +205,48 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             return UnitOfPower.WATT
         if key.startswith("ApPower"):
             return UnitOfApparentPower.VOLT_AMPERE
+        return None
+
+
+class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
+    """Sensor representing a measurement returned by the JSON API."""
+
+    def __init__(
+        self,
+        coordinator: BlueprintDataUpdateCoordinator,
+        device: JsonDevice,
+        sensor: JsonSensor,
+    ) -> None:
+        """Initialize the JSON sensor."""
+        super().__init__(coordinator)
+        self._device_id = device.id
+        self._sensor_key = sensor.key
+        self._attr_name = sensor.name
+        self._attr_unique_id = f"{device.id}_{sensor.key}"
+        self._attr_native_unit_of_measurement = {
+            "C": UnitOfTemperature.CELSIUS,
+            "F": UnitOfTemperature.FAHRENHEIT,
+        }.get(sensor.unit or "", sensor.unit or None)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device.id)},
+            name=device.name,
+            manufacturer="Geist",
+            model=device.model or None,
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the latest numeric value from coordinator data."""
+        data = self.coordinator.data
+        if not isinstance(data, JsonParsedData):
+            return None
+        for device in data.devices:
+            if device.id == self._device_id:
+                for sensor in device.sensors:
+                    if sensor.key == self._sensor_key:
+                        try:
+                            value = float(sensor.value)
+                        except (TypeError, ValueError):
+                            return None
+                        return value if math.isfinite(value) else None
         return None

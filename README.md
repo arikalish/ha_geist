@@ -1,18 +1,43 @@
-# Notice
+# Geist Home Assistant integration
 
-The component and platforms in this repository are not meant to be used by a
-user, but as a "blueprint" that custom component developers can build
-upon, to make more awesome stuff.
+This custom integration supports Geist devices that expose either the legacy
+XML endpoint or the newer token-authenticated JSON API.
 
-HAVE FUN! 😎
+## Setup
 
-## Why?
+Add **HA Geist** from **Settings → Devices & services → Add integration**.
+Enter the device URL (for example, `http://192.168.1.50`) and an account
+supported by the device. The integration detects the API type while validating
+the connection. Devices with known Geist MAC address prefixes can be offered
+through DHCP discovery; manual host entry remains available.
 
-This is simple, by having custom_components look (README + structure) the same
-it is easier for developers to help each other and for users to start using them.
+Use an account with control permissions if you want to operate relays. The
+integration keeps the API token in memory and stores the configured username
+and password in the Home Assistant config entry.
 
-If you are a developer and you want to add things to this "blueprint" that you think more
-developers will have use for, please open a PR to add it :)
+## Entities
+
+The legacy XML API creates sensors from each device's `<field>` elements. The
+JSON API creates sensors from device measurements and analog inputs, and a
+switch for each relay. Relay switches send explicit on/off commands and refresh
+the device state afterward. Data is polled every 30 seconds.
+
+SNMP discovery is not currently used. Discovery does not scan network ranges.
+
+## Development
+
+Run `scripts/develop` to start the local Home Assistant instance. Run
+`ruff check .` and `pytest` to lint and test the integration.
+
+## Repository notes
+
+This repository also includes scaffolding used for local development and
+testing.
+
+## Repository layout
+
+The integration code lives in `custom_components/ha_geist`; development and
+Home Assistant configuration files are included for local testing.
 
 ## What?
 
