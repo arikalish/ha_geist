@@ -127,6 +127,7 @@ class TestApiClients(unittest.TestCase):
         self.assertEqual(result["devices"][0].manufacturer, "Geist")
         self.assertEqual(result["devices"][0].sw_version, "3.16.3")
         self.assertEqual(result["devices"][0].serial_number, "01D9BCD512000084")
+        self.assertEqual(result["devices"][1].serial_number, "EA00000132301A28")
         self.assertEqual(session.requests[0]["url"], "http://geist.local/data.xml")
 
     def test_json_api_authenticates_and_parses_measurements(self) -> None:
