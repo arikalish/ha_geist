@@ -20,8 +20,10 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
+from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
 from .coordinator import BlueprintDataUpdateCoordinator
@@ -51,30 +53,87 @@ _JSON_SENSOR_FIELDS = {
     "dewpoint": "DewPtC",
     "humidity": "Humidity",
     "relativehumidity": "Humidity",
-    "voltage": "Volt",
-    "volts": "Volt",
+    "voltage": "Volts",
+    "volts": "Volts",
     "current": "Amps",
     "amps": "Amps",
     "powerfactor": "Pwr-Factor",
     "sound": "Sound",
+    "soundlevel": "Sound",
     "airflow": "Airflow",
     "light": "Light",
+    "lightlevel": "Light",
     "analog": "IO",
     "realpower": "RealPower",
     "power": "RealPower",
     "apparentpower": "ApPower",
 }
 
+_JSON_FIELD_NAMES = {
+    "TempC": "Temperature",
+    "DewPtC": "Dew Point",
+    "Humidity": "Relative Humidity",
+    "Volts": "Volts",
+    "Amps": "Amps",
+    "Pwr-Factor": "Power Factor",
+    "Sound": "Sound Level",
+    "Airflow": "Air Flow",
+    "Light": "Light Level",
+    "RealPower": "Real Power",
+    "ApPower": "Apparent Power",
+}
+
 _FIELD_DEVICE_CLASSES = {
     "TempC": SensorDeviceClass.TEMPERATURE,
     "DewPtC": SensorDeviceClass.TEMPERATURE,
     "Humidity": SensorDeviceClass.HUMIDITY,
-    "Volt": SensorDeviceClass.VOLTAGE,
+    "Volts": SensorDeviceClass.VOLTAGE,
     "Amps": SensorDeviceClass.CURRENT,
     "Pwr-Factor": SensorDeviceClass.POWER_FACTOR,
     "RealPower": SensorDeviceClass.POWER,
     "ApPower": SensorDeviceClass.APPARENT_POWER,
 }
+
+_TEMPERATURE_UNITS = {
+    "C": UnitOfTemperature.CELSIUS,
+    "F": UnitOfTemperature.FAHRENHEIT,
+    "°C": UnitOfTemperature.CELSIUS,
+    "°F": UnitOfTemperature.FAHRENHEIT,
+}
+
+
+def _json_field_key(sensor: JsonSensor) -> str | None:
+    """Find the equivalent XML field for a JSON measurement."""
+    for value in (sensor.measurement_type, sensor.measurement_name):
+        if value:
+            field_key = _JSON_SENSOR_FIELDS.get(re.sub(r"[^a-z0-9]", "", value.lower()))
+            if field_key:
+                return field_key
+    return None
+
+
+def _json_temperature_unit(sensor: JsonSensor) -> UnitOfTemperature | None:
+    """Recognize the temperature units reported by the device."""
+    return (
+        _TEMPERATURE_UNITS.get(sensor.unit.strip().upper())
+        if isinstance(sensor.unit, str)
+        else None
+    )
+
+
+def _json_sensor_name(sensor: JsonSensor, field_key: str | None) -> str:
+    """Use XML-style names for known generic measurements, retaining custom labels."""
+    name = (
+        re.sub(r"\s*\([CF]\)$", "", sensor.name, flags=re.IGNORECASE)
+        if field_key in {"TempC", "DewPtC"}
+        else sensor.name
+    )
+    normalized = re.sub(r"[^a-z0-9]", "", name.lower())
+    if field_key == "Humidity" or (
+        field_key and _JSON_SENSOR_FIELDS.get(normalized) == field_key
+    ):
+        return _JSON_FIELD_NAMES.get(field_key, name)
+    return sensor.name
 
 
 async def async_setup_entry(
@@ -89,14 +148,7 @@ async def async_setup_entry(
         if not isinstance(data, JsonParsedData):
             message = "The JSON API returned unexpected data"
             raise HomeAssistantError(message)
-        async_add_entities(
-            [
-                JsonSensorEntity(coordinator, device, sensor)
-                for device in data.devices
-                for sensor in device.sensors
-                if not is_digital_measurement(sensor)
-            ]
-        )
+        _setup_json_sensors(hass, entry, data, async_add_entities)
         _setup_alarm_sensors(hass, entry, async_add_entities)
         return
 
@@ -134,43 +186,131 @@ async def async_setup_entry(
     _setup_alarm_sensors(hass, entry, async_add_entities)
 
 
+def _setup_json_sensors(
+    hass: HomeAssistant,
+    entry: IntegrationBlueprintConfigEntry,
+    data: JsonParsedData,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Create JSON sensors and migrate existing registry entries."""
+    coordinator = entry.runtime_data.coordinator
+    registry = er.async_get(hass)
+    entities: list[JsonSensorEntity] = []
+    for device in data.devices:
+        for sensor in device.sensors:
+            if is_digital_measurement(sensor):
+                continue
+            field_key = _json_field_key(sensor)
+            source_unit = _json_temperature_unit(sensor)
+            is_temperature = field_key in {"TempC", "DewPtC"} and source_unit
+            units = (
+                (UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT)
+                if is_temperature
+                else (None,)
+            )
+            new_entities = [
+                JsonSensorEntity(coordinator, device, sensor, unit) for unit in units
+            ]
+            legacy_id = f"{device.id}_{sensor.key}"
+            for entity in new_entities:
+                unique_id = entity.unique_id
+                if unique_id is None:
+                    msg = "JSON measurement is missing a unique ID"
+                    raise HomeAssistantError(msg)
+                existing_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+                uses_legacy_id = (
+                    is_temperature
+                    and entity.native_unit_of_measurement == source_unit
+                    and existing_id is None
+                )
+                if uses_legacy_id:
+                    existing_id = registry.async_get_entity_id(
+                        "sensor", DOMAIN, legacy_id
+                    )
+                if existing_id:
+                    _migrate_json_sensor(
+                        registry,
+                        entry.entry_id,
+                        entity,
+                        existing_id,
+                        legacy_id,
+                        source_unit if uses_legacy_id else None,
+                    )
+            entities.extend(new_entities)
+    async_add_entities(entities)
+
+
+def _migrate_json_sensor(
+    registry: er.EntityRegistry,
+    entry_id: str,
+    entity: JsonSensorEntity,
+    existing_id: str,
+    legacy_id: str,
+    source_unit: UnitOfTemperature | None,
+) -> None:
+    """Migrate only IDs generated by earlier versions and preserve custom IDs."""
+    existing = registry.async_get(existing_id)
+    if not existing or existing.config_entry_id != entry_id:
+        return
+    new_unique_id = entity.unique_id if source_unit and entity.unique_id else UNDEFINED
+    old_defaults = (json_entity_id("sensor", legacy_id), entity.legacy_entity_id)
+    new_entity_id = UNDEFINED
+    current_suffix = existing_id.removeprefix(f"{entity.entity_id}_")
+    already_simplified = existing_id == entity.entity_id or (
+        current_suffix != existing_id
+        and current_suffix.isdecimal()
+        and int(current_suffix) >= 1
+    )
+    if not already_simplified and any(
+        existing_id == old_default
+        or (
+            existing_id.startswith(f"{old_default}_")
+            and existing_id.removeprefix(f"{old_default}_").isdecimal()
+        )
+        for old_default in old_defaults
+    ):
+        new_entity_id = registry.async_generate_entity_id(
+            "sensor", entity.entity_id.removeprefix("sensor.")
+        )
+    if new_entity_id is UNDEFINED and new_unique_id is UNDEFINED:
+        return
+    existing = registry.async_update_entity(
+        existing_id, new_entity_id=new_entity_id, new_unique_id=new_unique_id
+    )
+    if source_unit:
+        private_options = dict(existing.options.get("sensor.private", {}))
+        private_options["suggested_unit_of_measurement"] = source_unit
+        registry.async_update_entity_options(
+            existing.entity_id, "sensor.private", private_options
+        )
+
+
 def _setup_alarm_sensors(
     hass: HomeAssistant,
     entry: IntegrationBlueprintConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Add alarm sensors initially and when new triggers appear."""
+    """Reconcile alarm sensors with the device's configured triggers."""
     coordinator = entry.runtime_data.coordinator
     known_ids: set[str] = set()
-    json_legacy_removed = False
 
     @callback
     def add_new_alarms() -> None:
-        nonlocal json_legacy_removed
         alarms = current_alarms(coordinator.data)
         if alarms is None:
             return
         current_ids = {alarm.id for alarm in alarms}
-        is_xml = isinstance(coordinator.data, dict)
-        if is_xml or not json_legacy_removed:
-            registry = er.async_get(hass)
-            prefix = f"{entry.entry_id}_alarm_"
-            for existing in er.async_entries_for_config_entry(registry, entry.entry_id):
-                old_id = existing.unique_id.removeprefix(prefix)
-                if (
-                    existing.domain == "sensor"
-                    and existing.platform == DOMAIN
-                    and existing.unique_id.startswith(prefix)
-                    and (
-                        (is_xml and old_id not in current_ids)
-                        or (not is_xml and old_id.isdecimal())
-                    )
-                ):
-                    registry.async_remove(existing.entity_id)
-            if not is_xml:
-                json_legacy_removed = True
-        if is_xml:
-            known_ids.intersection_update(current_ids)
+        registry = er.async_get(hass)
+        prefix = f"{entry.entry_id}_alarm_"
+        for existing in er.async_entries_for_config_entry(registry, entry.entry_id):
+            if (
+                existing.domain == "sensor"
+                and existing.platform == DOMAIN
+                and existing.unique_id.startswith(prefix)
+                and existing.unique_id.removeprefix(prefix) not in current_ids
+            ):
+                registry.async_remove(existing.entity_id)
+        known_ids.intersection_update(current_ids)
         new_alarms = [alarm for alarm in alarms if alarm.id not in known_ids]
         known_ids.update(alarm.id for alarm in new_alarms)
         if new_alarms:
@@ -365,29 +505,52 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
         coordinator: BlueprintDataUpdateCoordinator,
         device: JsonDevice,
         sensor: JsonSensor,
+        temperature_unit: UnitOfTemperature | None = None,
     ) -> None:
         """Initialize the JSON sensor."""
         super().__init__(coordinator)
         self._device_id = device.id
         self._sensor_key = sensor.key
-        self._attr_name = sensor.name
+        self._temperature_unit = temperature_unit
+        field_key = _json_field_key(sensor)
+        name = _json_sensor_name(sensor, field_key)
+        self._attr_name = name
         self._attr_unique_id = f"{device.id}_{sensor.key}"
-        self.entity_id = json_entity_id("sensor", self._attr_unique_id)
-        self._attr_native_unit_of_measurement = {
-            "C": UnitOfTemperature.CELSIUS,
-            "F": UnitOfTemperature.FAHRENHEIT,
-        }.get(sensor.unit or "", sensor.unit or None)
-        field_key = None
-        for value in (sensor.measurement_type, sensor.measurement_name):
-            if value:
-                field_key = _JSON_SENSOR_FIELDS.get(
-                    re.sub(r"[^a-z0-9]", "", value.lower())
+        self._attr_native_unit_of_measurement = (
+            temperature_unit or _json_temperature_unit(sensor) or sensor.unit or None
+        )
+        suffix = field_key
+        if temperature_unit:
+            if field_key not in {"TempC", "DewPtC"}:
+                msg = (
+                    "A temperature unit requires a temperature or dewpoint measurement"
                 )
-                if field_key:
-                    break
+                raise ValueError(msg)
+            suffix = f"{field_key[:-1]}{'C' if temperature_unit == UnitOfTemperature.CELSIUS else 'F'}"
+            self._attr_unique_id = f"{self._attr_unique_id}_{suffix.lower()}"
+            name = re.sub(r"\s*\([CF]\)$", "", name, flags=re.IGNORECASE)
+            self._attr_name = f"{name} ({'C' if temperature_unit == UnitOfTemperature.CELSIUS else 'F'})"
+            self._attr_suggested_unit_of_measurement = temperature_unit
+        elif field_key in {"TempC", "DewPtC"} or (
+            not suffix and sensor.key.startswith("entity_")
+        ):
+            suffix = sensor.measurement_type or sensor.measurement_name
+        legacy_object_id = (
+            f"{device.id}_{sensor.key}_{suffix}"
+            if suffix and sensor.key.startswith("entity_")
+            else f"{device.id}_{sensor.key}"
+        )
+        self.legacy_entity_id = json_entity_id("sensor", legacy_object_id)
+        measurement_type = (
+            "analog"
+            if sensor.key.startswith("analog_")
+            else suffix
+            or sensor.measurement_type
+            or sensor.measurement_name
+            or "measurement"
+        )
+        self.entity_id = json_entity_id("sensor", f"{device.id}_{measurement_type}")
         if field_key:
-            if field_key == "Humidity":
-                self._attr_name = "Relative Humidity"
             self._attr_icon = FieldSensor.icon_for_field_key(field_key)
             device_class = _FIELD_DEVICE_CLASSES.get(field_key)
             if (
@@ -424,5 +587,18 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
                             value = float(sensor.value)
                         except (TypeError, ValueError):
                             return None
+                        if not math.isfinite(value):
+                            return None
+                        if self._temperature_unit:
+                            source_unit = _json_temperature_unit(sensor)
+                            if not source_unit:
+                                return None
+                            if source_unit != self._temperature_unit:
+                                value = round(
+                                    TemperatureConverter.convert(
+                                        value, source_unit, self._temperature_unit
+                                    ),
+                                    2,
+                                )
                         return value if math.isfinite(value) else None
         return None

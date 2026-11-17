@@ -20,20 +20,25 @@ and password in the Home Assistant config entry.
 The legacy XML API creates sensors from each device's `<field>` elements. The
 JSON API creates sensors from device measurements and analog inputs, and a
 switch for each relay. Relay switches send explicit on/off commands and refresh
-the device state afterward. Data is polled every 30 seconds.
+the device state afterward. Data is polled every 30 seconds. Debug logs summarize
+JSON device, measurement, relay and alarm counts without logging credentials.
 
 Configured alarms are exposed as read-only sensors. Their names include reported
 thresholds, and their entity IDs include the target, comparison type, and alarm
 slot (or channel on older XML devices).
-XML alarm sensors are added and removed as the device configuration changes.
+XML and JSON alarm sensors are added and removed as device configuration changes.
 For JSON devices, a control-enabled account also exposes an acknowledgement
 button for each alarm. It is available while the alarm is tripped or
 latched and does not resolve the underlying fault.
 Changing an alarm identity creates a new entity ID; update automations that
 refer to the old one. Digital inputs from the JSON API are binary sensors.
-JSON measurement, digital input and relay entity IDs include the device ID and
-measurement or relay key. Existing IDs are renamed on upgrade; review any
-automations or dashboards referring to the previous IDs.
+JSON measurement and digital input entity IDs use the device ID and measurement
+type, with numeric suffixes for duplicates. Known measurement names follow the
+XML naming style. Temperature and dewpoint sensors provide both Celsius and
+Fahrenheit when the source unit is known; converted values are rounded to two
+decimal places. Relay IDs retain their relay key.
+Existing default IDs are renamed on upgrade; review automations or dashboards
+referring to the previous IDs.
 
 SNMP discovery is not currently used. Discovery does not scan network ranges.
 

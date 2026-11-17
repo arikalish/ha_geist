@@ -6,7 +6,7 @@ import json
 import socket
 from collections.abc import Mapping
 from typing import Any, NoReturn
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import aiohttp
 import async_timeout
@@ -178,6 +178,13 @@ class GeistJsonApiClient:
                 "The device API returned an invalid device list",
             )
         parsed = _parse_devices(data)
+        LOGGER.debug(
+            "Parsed JSON device data: server_host=%s, devices=%d, measurements=%d, relays=%d",
+            urlsplit(self._base_url).hostname,
+            len(parsed.devices),
+            sum(len(device.sensors) for device in parsed.devices),
+            sum(len(device.relays) for device in parsed.devices),
+        )
         system_info_loaded = False
         if self._system_info is None:
             try:
@@ -324,13 +331,19 @@ class GeistJsonApiClient:
                 )
             )
         try:
-            return unique_alarm_ids(alarms)
+            alarms = unique_alarm_ids(alarms)
         except ValueError as exception:
             _raise_error(
                 IntegrationBlueprintApiClientError,
                 "The device returned duplicate alarm identities",
                 exception,
             )
+        LOGGER.debug(
+            "Parsed JSON alarm data: server_host=%s, alarms=%d",
+            urlsplit(self._base_url).hostname,
+            len(alarms),
+        )
+        return alarms
 
     async def async_acknowledge_alarm(self, trigger_id: str) -> None:
         """Acknowledge a JSON alarm trigger."""

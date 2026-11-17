@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,  # noqa: ARG001
+    hass: HomeAssistant,
     entry: IntegrationBlueprintConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
@@ -36,14 +36,41 @@ async def async_setup_entry(
     if not isinstance(data, JsonParsedData):
         message = "The JSON API returned unexpected digital input data"
         raise HomeAssistantError(message)
-    async_add_entities(
-        [
-            GeistDigitalInput(coordinator, device, sensor)
-            for device in data.devices
-            for sensor in device.sensors
-            if is_digital_measurement(sensor)
-        ]
-    )
+    registry = er.async_get(hass)
+    entities: list[GeistDigitalInput] = []
+    for device in data.devices:
+        for sensor in device.sensors:
+            if not is_digital_measurement(sensor):
+                continue
+            entity = GeistDigitalInput(coordinator, device, sensor)
+            unique_id = f"{device.id}_{sensor.key}"
+            existing_id = registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, unique_id
+            )
+            if existing_id:
+                existing = registry.async_get(existing_id)
+                old_defaults = (
+                    json_entity_id("binary_sensor", unique_id),
+                    json_entity_id("binary_sensor", f"{unique_id}_digital"),
+                )
+                if (
+                    existing
+                    and existing.config_entry_id == entry.entry_id
+                    and any(
+                        existing_id == old_default
+                        or (
+                            existing_id.startswith(f"{old_default}_")
+                            and existing_id.removeprefix(f"{old_default}_").isdecimal()
+                        )
+                        for old_default in old_defaults
+                    )
+                ):
+                    new_id = registry.async_generate_entity_id(
+                        "binary_sensor", entity.entity_id.removeprefix("binary_sensor.")
+                    )
+                    registry.async_update_entity(existing_id, new_entity_id=new_id)
+            entities.append(entity)
+    async_add_entities(entities)
 
 
 class GeistDigitalInput(IntegrationBlueprintEntity, BinarySensorEntity):
@@ -63,7 +90,7 @@ class GeistDigitalInput(IntegrationBlueprintEntity, BinarySensorEntity):
         self._device_id = device.id
         self._sensor_key = sensor.key
         self._attr_unique_id = f"{device.id}_{sensor.key}"
-        self.entity_id = json_entity_id("binary_sensor", self._attr_unique_id)
+        self.entity_id = json_entity_id("binary_sensor", f"{device.id}_digital")
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.id)},
             name=device.name,
