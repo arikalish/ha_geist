@@ -15,6 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from custom_components.ha_geist.api import (
@@ -382,7 +383,13 @@ class TestApiClients(unittest.TestCase):
     def test_json_relay_command_uses_control_payload(self) -> None:
         """Relay control is sent only through the explicit on/off API command."""
         session = FakeSession(
-            [login_response(), api_response({}), system_response(), api_response({})]
+            [
+                login_response(),
+                api_response({}),
+                system_response(),
+                api_response({}),
+                api_response({}),
+            ]
         )
         client = GeistJsonApiClient(
             "test-user",
@@ -394,6 +401,7 @@ class TestApiClients(unittest.TestCase):
         async def run() -> None:
             await client.async_get_data()
             await client.async_set_relay_state("device-1", "0", "on")
+            await client.async_set_relay_state("device-1", "0", "off")
 
         asyncio.run(run())
 
@@ -404,9 +412,55 @@ class TestApiClients(unittest.TestCase):
             {
                 "token": "sample-session-id",
                 "cmd": "control",
-                "data": {"action": {"value": "on"}},
+                "data": {"action": "on"},
             },
         )
+        self.assertEqual(session.requests[4]["json"]["data"], {"action": "off"})
+
+    def test_alarm_mode_relay_cannot_be_controlled(self) -> None:
+        """Alarm-mode relays are unavailable and reject direct switch commands."""
+        data = _parse_devices(
+            {"device-1": {"relay": {"0": {"state": "on", "mode": "alarm"}}}}
+        )
+        client = MagicMock(spec=GeistJsonApiClient)
+        client.async_set_relay_state = AsyncMock()
+        coordinator = SimpleNamespace(
+            config_entry=SimpleNamespace(
+                entry_id="entry",
+                domain="ha_geist",
+                runtime_data=SimpleNamespace(client=client),
+            ),
+            data=data,
+            last_update_success=True,
+            async_request_refresh=AsyncMock(),
+        )
+        switch = GeistRelaySwitch(
+            coordinator, data.devices[0], data.devices[0].relays[0]  # type: ignore[arg-type]
+        )
+
+        async def run() -> None:
+            self.assertFalse(switch.available)
+            self.assertTrue(switch.is_on)
+            with self.assertRaises(HomeAssistantError):
+                await switch.async_turn_off()
+            with self.assertRaises(HomeAssistantError):
+                await switch.async_turn_on()
+            client.async_set_relay_state.assert_not_awaited()
+
+            coordinator.data = _parse_devices(
+                {"device-1": {"relay": {"0": {"state": "off", "mode": "manual"}}}}
+            )
+            self.assertTrue(switch.available)
+            await switch.async_turn_on()
+            client.async_set_relay_state.assert_awaited_once_with("device-1", "0", "on")
+            coordinator.async_request_refresh.assert_awaited_once()
+
+            coordinator.data = _parse_devices(
+                {"device-1": {"relay": {"0": {"state": "off"}}}}
+            )
+            self.assertTrue(switch.available)
+
+        asyncio.run(run())
 
     def test_json_read_only_account_cannot_send_relay_command(self) -> None:
         """A read-only account fails before any relay control request is sent."""

@@ -76,15 +76,21 @@ class GeistRelaySwitch(CoordinatorEntity[BlueprintDataUpdateCoordinator], Switch
     @property
     def is_on(self) -> bool:
         """Return the latest relay state."""
-        return self._relay_state() is True
+        return self._relay_state(self._relay()) is True
 
     @property
     def available(self) -> bool:
-        """Return whether the latest relay state is recognized."""
-        return super().available and self._relay_state() is not None
+        """Return whether the relay supports manual control."""
+        relay = self._relay()
+        return (
+            super().available
+            and relay is not None
+            and (relay.mode or "").lower() != "alarm"
+            and self._relay_state(relay) is not None
+        )
 
-    def _relay_state(self) -> bool | None:
-        """Return the known state of this relay."""
+    def _relay(self) -> JsonRelay | None:
+        """Return the latest data for this relay."""
         data = self.coordinator.data
         if not isinstance(data, JsonParsedData):
             return None
@@ -92,11 +98,18 @@ class GeistRelaySwitch(CoordinatorEntity[BlueprintDataUpdateCoordinator], Switch
             if device.id == self._device_id:
                 for relay in device.relays:
                     if relay.index == self._relay_index:
-                        state = relay.state.lower()
-                        if state in {"on", "on2off", "latchedon", "rebootoff"}:
-                            return True
-                        if state in {"off", "off2on", "latchedoff", "rebooton"}:
-                            return False
+                        return relay
+        return None
+
+    @staticmethod
+    def _relay_state(relay: JsonRelay | None) -> bool | None:
+        """Return the known state of a relay."""
+        if relay is not None:
+            state = relay.state.lower()
+            if state in {"on", "on2off", "latchedon", "rebootoff"}:
+                return True
+            if state in {"off", "off2on", "latchedoff", "rebooton"}:
+                return False
         return None
 
     async def async_turn_on(self, **kwargs: object) -> None:  # noqa: ARG002
@@ -109,6 +122,10 @@ class GeistRelaySwitch(CoordinatorEntity[BlueprintDataUpdateCoordinator], Switch
 
     async def _set_state(self, state: str) -> None:
         """Send a relay command and refresh the coordinator."""
+        relay = self._relay()
+        if relay and (relay.mode or "").lower() == "alarm":
+            message = "Cannot control a relay in alarm mode"
+            raise HomeAssistantError(message)
         client = self.coordinator.config_entry.runtime_data.client
         if not isinstance(client, GeistJsonApiClient):
             message = "The configured device does not support relay control"

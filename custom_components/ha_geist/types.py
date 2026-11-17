@@ -43,6 +43,7 @@ class JsonRelay:
     state: str
     on_label: str
     off_label: str
+    mode: Optional[str] = None
 
 
 @dataclass

@@ -115,6 +115,7 @@ def _parse_devices(payload: Any) -> JsonParsedData:
                 state=str(relay.get("state") or "unknown"),
                 on_label=str(relay.get("onLabel") or "On"),
                 off_label=str(relay.get("offLabel") or "Off"),
+                mode=str(relay["mode"]) if relay.get("mode") is not None else None,
             )
             for relay_index, relay in _items(source.get("relay"))
         ]
@@ -223,7 +224,7 @@ class GeistJsonApiClient:
         path = (
             f"/api/dev/{quote(device_id, safe='')}/relay/{quote(relay_index, safe='')}"
         )
-        await self._async_call(path, "control", {"action": {"value": state}})
+        await self._async_call(path, "control", {"action": state})
 
     async def _async_login(self) -> None:
         """Acquire a token using the device's login endpoint."""
