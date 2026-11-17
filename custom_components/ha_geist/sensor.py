@@ -25,7 +25,7 @@ from homeassistant.util import slugify
 
 from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
 from .coordinator import BlueprintDataUpdateCoordinator
-from .entity import IntegrationBlueprintEntity
+from .entity import IntegrationBlueprintEntity, json_entity_id
 from .types import (
     Alarm,
     Device,
@@ -33,6 +33,8 @@ from .types import (
     JsonDevice,
     JsonParsedData,
     JsonSensor,
+    current_alarms,
+    find_alarm,
     is_digital_measurement,
 )
 
@@ -145,7 +147,7 @@ def _setup_alarm_sensors(
     @callback
     def add_new_alarms() -> None:
         nonlocal json_legacy_removed
-        alarms = _current_alarms(coordinator.data)
+        alarms = current_alarms(coordinator.data)
         if alarms is None:
             return
         current_ids = {alarm.id for alarm in alarms}
@@ -183,15 +185,6 @@ def _setup_alarm_sensors(
     entry.async_on_unload(coordinator.async_add_listener(add_new_alarms))
 
 
-def _current_alarms(data: object) -> list[Alarm] | None:
-    """Return current alarm data, distinguishing missing data from an empty list."""
-    if isinstance(data, JsonParsedData):
-        return data.alarms
-    if isinstance(data, dict):
-        return data.get("alarms")
-    return None
-
-
 class AlarmSensor(CoordinatorEntity[BlueprintDataUpdateCoordinator], SensorEntity):
     """Expose the device's reported state for a configured alarm."""
 
@@ -211,10 +204,7 @@ class AlarmSensor(CoordinatorEntity[BlueprintDataUpdateCoordinator], SensorEntit
 
     def _alarm(self) -> Alarm | None:
         """Find the latest data for this alarm."""
-        alarms = _current_alarms(self.coordinator.data)
-        if alarms is not None:
-            return next((alarm for alarm in alarms if alarm.id == self._alarm_id), None)
-        return None
+        return find_alarm(self.coordinator.data, self._alarm_id)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -382,6 +372,7 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
         self._sensor_key = sensor.key
         self._attr_name = sensor.name
         self._attr_unique_id = f"{device.id}_{sensor.key}"
+        self.entity_id = json_entity_id("sensor", self._attr_unique_id)
         self._attr_native_unit_of_measurement = {
             "C": UnitOfTemperature.CELSIUS,
             "F": UnitOfTemperature.FAHRENHEIT,

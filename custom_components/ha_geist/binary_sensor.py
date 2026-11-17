@@ -12,7 +12,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
-from .entity import IntegrationBlueprintEntity
+from .entity import IntegrationBlueprintEntity, json_entity_id
 from .types import JsonDevice, JsonParsedData, JsonSensor, is_digital_measurement
 
 if TYPE_CHECKING:
@@ -63,6 +63,7 @@ class GeistDigitalInput(IntegrationBlueprintEntity, BinarySensorEntity):
         self._device_id = device.id
         self._sensor_key = sensor.key
         self._attr_unique_id = f"{device.id}_{sensor.key}"
+        self.entity_id = json_entity_id("binary_sensor", self._attr_unique_id)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.id)},
             name=device.name,

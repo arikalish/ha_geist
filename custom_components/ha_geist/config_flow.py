@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 class BlueprintFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Blueprint."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_dhcp(
         self, discovery_info: DhcpServiceInfo
@@ -122,9 +122,7 @@ class BlueprintFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             if user_input is not None
             else {
                 **entry.data,
-                CONF_NAME: (
-                    entry.title if entry.title != entry.data[CONF_URL] else ""
-                ),
+                CONF_NAME: (entry.title if entry.title != entry.data[CONF_URL] else ""),
             }
             if entry is not None
             else {CONF_URL: getattr(self, "_discovered_url", "http://example.com")}

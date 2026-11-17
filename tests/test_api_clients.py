@@ -25,6 +25,7 @@ from homeassistant.helpers.entity_platform import EntityPlatform
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
+from custom_components.ha_geist import async_migrate_entry
 from custom_components.ha_geist.api import (
     IntegrationBlueprintApiClient,
     IntegrationBlueprintApiClientAuthenticationError,
@@ -37,6 +38,8 @@ from custom_components.ha_geist.binary_sensor import (
 from custom_components.ha_geist.binary_sensor import (
     async_setup_entry as async_setup_binary_sensors,
 )
+from custom_components.ha_geist.button import GeistAlarmAcknowledgeButton
+from custom_components.ha_geist.button import async_setup_entry as async_setup_buttons
 from custom_components.ha_geist.const import API_TYPE_JSON, CONF_API_TYPE
 from custom_components.ha_geist.coordinator import BlueprintDataUpdateCoordinator
 from custom_components.ha_geist.sensor import (
@@ -147,6 +150,196 @@ def system_response(serial: str = "controller-serial") -> FakeResponse:
 
 class TestApiClients(unittest.TestCase):
     """Validate the XML and JSON API clients."""
+
+    def test_json_entities_use_device_specific_entity_ids(self) -> None:
+        """Identical measurements and relays on different devices have distinct IDs."""
+        data = _parse_devices(
+            {
+                device_id: {
+                    "entity": {
+                        "0": {
+                            "measurement": {
+                                "0": {"type": "temperature", "value": "20"},
+                                "1": {"type": "ccatDigital", "value": "1"},
+                            }
+                        }
+                    },
+                    "analog": {"0": {"label": "Analog 1", "value": "1"}},
+                    "relay": {"0": {"label": "Relay 1", "state": "off"}},
+                }
+                for device_id in ("device-1", "device-2")
+            }
+        )
+        coordinator = SimpleNamespace(
+            data=data,
+            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
+        )
+        entities = [
+            entity
+            for device in data.devices
+            for entity in (
+                JsonSensorEntity(coordinator, device, device.sensors[0]),
+                GeistDigitalInput(coordinator, device, device.sensors[1]),
+                JsonSensorEntity(coordinator, device, device.sensors[2]),
+                GeistRelaySwitch(coordinator, device, device.relays[0]),
+            )
+        ]
+        self.assertEqual(
+            [entity.entity_id for entity in entities],
+            [
+                "sensor.device_1_entity_0_0",
+                "binary_sensor.device_1_entity_0_1",
+                "sensor.device_1_analog_0",
+                "switch.device_1_relay_0",
+                "sensor.device_2_entity_0_0",
+                "binary_sensor.device_2_entity_0_1",
+                "sensor.device_2_analog_0",
+                "switch.device_2_relay_0",
+            ],
+        )
+
+    def test_json_entity_id_migration_preserves_registry_settings(self) -> None:
+        """Rename existing entries once, retaining unique IDs and custom settings."""
+
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as config_dir:
+                hass = HomeAssistant(config_dir)
+                await er.async_load(hass)
+                entry = SimpleNamespace(
+                    entry_id="entry",
+                    version=1,
+                    domain="ha_geist",
+                    data={CONF_API_TYPE: API_TYPE_JSON},
+                    pref_disable_new_entities=False,
+                    pref_disable_polling=False,
+                )
+                hass.config_entries = MagicMock()
+                hass.config_entries.async_get_entry.return_value = entry
+                registry = er.async_get(hass)
+                first = registry.async_get_or_create(
+                    "sensor",
+                    "ha_geist",
+                    "device-1_analog_0",
+                    config_entry=entry,
+                    suggested_object_id="analog_1",
+                )
+                registry.async_update_entity(first.entity_id, name="Custom analog")
+                second = registry.async_get_or_create(
+                    "sensor",
+                    "ha_geist",
+                    "device-2_analog_0",
+                    config_entry=entry,
+                    suggested_object_id="analog_1",
+                )
+                digital = registry.async_get_or_create(
+                    "binary_sensor",
+                    "ha_geist",
+                    "device-1_entity_0_1",
+                    config_entry=entry,
+                    disabled_by=er.RegistryEntryDisabler.USER,
+                )
+                relay = registry.async_get_or_create(
+                    "switch",
+                    "ha_geist",
+                    "device-1_relay_0",
+                    config_entry=entry,
+                )
+                alarm = registry.async_get_or_create(
+                    "sensor",
+                    "ha_geist",
+                    "entry_alarm_device_1_analog_0_high_0",
+                    config_entry=entry,
+                )
+                conflict = registry.async_get_or_create(
+                    "sensor",
+                    "other",
+                    "other-unique",
+                    suggested_object_id="device_1_analog_0",
+                )
+                self.assertTrue(await async_migrate_entry(hass, entry))  # type: ignore[arg-type]
+                migrated_id = registry.async_get_entity_id(
+                    "sensor", "ha_geist", "device-1_analog_0"
+                )
+                self.assertEqual(migrated_id, "sensor.device_1_analog_0_2")
+                migrated = registry.async_get(migrated_id)
+                assert migrated is not None
+                self.assertEqual(migrated.name, "Custom analog")
+                self.assertEqual(
+                    registry.async_get_entity_id(
+                        "sensor", "ha_geist", second.unique_id
+                    ),
+                    "sensor.device_2_analog_0",
+                )
+                digital_id = registry.async_get_entity_id(
+                    "binary_sensor", "ha_geist", digital.unique_id
+                )
+                self.assertEqual(digital_id, "binary_sensor.device_1_entity_0_1")
+                self.assertEqual(
+                    registry.async_get(digital_id).disabled_by,
+                    er.RegistryEntryDisabler.USER,
+                )
+                self.assertEqual(
+                    registry.async_get_entity_id("switch", "ha_geist", relay.unique_id),
+                    "switch.device_1_relay_0",
+                )
+                self.assertIsNotNone(registry.async_get(alarm.entity_id))
+                self.assertIsNotNone(registry.async_get(conflict.entity_id))
+                hass.config_entries.async_update_entry.assert_called_with(
+                    entry, version=2
+                )
+                self.assertTrue(await async_migrate_entry(hass, entry))  # type: ignore[arg-type]
+                self.assertEqual(
+                    registry.async_get_entity_id(
+                        "sensor", "ha_geist", "device-1_analog_0"
+                    ),
+                    migrated_id,
+                )
+                await hass.async_block_till_done()
+                data = _parse_devices(
+                    {"device-2": {"analog": {"0": {"label": "Analog 1", "value": "3"}}}}
+                )
+                coordinator = SimpleNamespace(
+                    data=data,
+                    config_entry=entry,
+                    last_update_success=True,
+                    async_add_listener=MagicMock(return_value=lambda: None),
+                )
+                sensor = JsonSensorEntity(
+                    coordinator,
+                    data.devices[0],
+                    data.devices[0].sensors[0],  # type: ignore[arg-type]
+                )
+                sensor._attr_device_info = None  # noqa: SLF001
+                platform = EntityPlatform(
+                    hass=hass,
+                    logger=logging.getLogger(__name__),
+                    domain="sensor",
+                    platform_name="ha_geist",
+                    platform=None,
+                    scan_interval=timedelta(seconds=30),
+                    entity_namespace=None,
+                )
+                platform.config_entry = entry
+                await platform.async_add_entities([sensor])
+                state = hass.states.get("sensor.device_2_analog_0")
+                self.assertIsNotNone(state)
+                assert state is not None
+                self.assertEqual(state.state, "3.0")
+                await platform.async_reset()
+                await hass.async_stop(force=True)
+
+        asyncio.run(run())
+
+    def test_xml_entry_migration_keeps_entity_ids(self) -> None:
+        """The version upgrade does not rename XML entities."""
+        hass = SimpleNamespace(
+            config_entries=SimpleNamespace(async_update_entry=MagicMock())
+        )
+        entry = SimpleNamespace(version=1, data={}, entry_id="xml")
+        with patch("custom_components.ha_geist.er.async_get") as get_registry:
+            self.assertTrue(asyncio.run(async_migrate_entry(hass, entry)))  # type: ignore[arg-type]
+            get_registry.assert_not_called()
+        hass.config_entries.async_update_entry.assert_called_once_with(entry, version=2)
 
     def test_xml_api_parses_example_data(self) -> None:
         """Legacy data.xml parsing still exposes device fields."""
@@ -363,12 +556,88 @@ class TestApiClients(unittest.TestCase):
             self.assertEqual(alarms[0].device_id, "device-1")
             self.assertEqual(alarms[0].attributes["threshold"], "50")
             self.assertTrue(alarms[0].attributes["latching"])
+            self.assertTrue(alarms[0].latching)
+            self.assertEqual(alarms[0].trigger_id, "0")
             self.assertEqual(alarms[1].id, "device_1_analog_0_high_1")
             self.assertEqual(alarms[1].name, "Analog 1 High Alarm")
 
         asyncio.run(run())
         self.assertEqual(session.requests[3]["url"], "http://geist.local/api/alarm")
         self.assertEqual(session.requests[3]["json"]["cmd"], "get")
+
+    def test_json_alarm_acknowledgement_uses_trigger_and_retries_session(self) -> None:
+        """Acknowledge the specified trigger with the normal token retry."""
+        session = FakeSession(
+            [
+                login_response(),
+                api_response({"device": {"type": "other"}}),
+                system_response(),
+                api_response(ret_code=1002),
+                login_response("renewed-session"),
+                api_response(),
+            ]
+        )
+        client = GeistJsonApiClient(
+            "test-user",
+            "not-a-real-password",
+            session,
+            "http://geist.local",  # type: ignore[arg-type]
+        )
+
+        async def run() -> None:
+            await client.async_get_data()
+            await client.async_acknowledge_alarm("3/4")
+
+        asyncio.run(run())
+        self.assertEqual(
+            session.requests[3]["url"], "http://geist.local/api/alarm/trigger/3%2F4"
+        )
+        self.assertEqual(session.requests[3]["json"]["cmd"], "ack")
+        self.assertEqual(
+            session.requests[5]["json"], {"token": "renewed-session", "cmd": "ack"}
+        )
+
+    def test_json_alarm_acknowledgement_requires_permission(self) -> None:
+        """Read-only accounts cannot send acknowledgement commands."""
+        session = FakeSession(
+            [
+                login_response(control="false"),
+                api_response({"device": {"type": "other"}}),
+                system_response(),
+            ]
+        )
+        client = GeistJsonApiClient(
+            "test-user",
+            "not-a-real-password",
+            session,
+            "http://geist.local",  # type: ignore[arg-type]
+        )
+
+        async def run() -> None:
+            await client.async_get_data()
+            with self.assertRaises(IntegrationBlueprintApiClientAuthenticationError):
+                await client.async_acknowledge_alarm("3")
+            with self.assertRaises(ValueError):
+                await client.async_acknowledge_alarm("")
+
+        asyncio.run(run())
+        self.assertEqual(len(session.requests), EXPECTED_READ_ONLY_REQUESTS)
+
+    def test_invalid_json_alarm_is_not_treated_as_removed(self) -> None:
+        """A malformed trigger makes the alarm read fail instead of appearing absent."""
+        for trigger in ({"path": "device/analog/0"}, None):
+            with self.subTest(trigger=trigger):
+                session = FakeSession(
+                    [login_response(), api_response({"trigger": {"3": trigger}})]
+                )
+                client = GeistJsonApiClient(
+                    "test-user",
+                    "not-a-real-password",
+                    session,
+                    "http://geist.local",  # type: ignore[arg-type]
+                )
+                with self.assertRaises(IntegrationBlueprintApiClientError):
+                    asyncio.run(client.async_get_alarms([]))
 
     def test_alarm_sensors_track_new_removed_and_unavailable_alarms(self) -> None:
         """New triggers appear dynamically; missing alarm data is unavailable."""
@@ -445,6 +714,172 @@ class TestApiClients(unittest.TestCase):
             )
         self.assertIs(result, data)
         self.assertIsNone(data.alarms)
+
+    def test_alarm_acknowledgement_button_lifecycle(self) -> None:
+        """Buttons track all triggers and acknowledge only active alarms."""
+
+        async def run() -> None:
+            with tempfile.TemporaryDirectory() as config_dir:
+                hass = HomeAssistant(config_dir)
+                await er.async_load(hass)
+                data = _parse_devices({"device": {"type": "other"}})
+                data.alarms = None
+                client = MagicMock(spec=GeistJsonApiClient)
+                client.can_control = True
+                client.async_acknowledge_alarm = AsyncMock()
+                entry = SimpleNamespace(
+                    entry_id="entry",
+                    domain="ha_geist",
+                    data={CONF_API_TYPE: API_TYPE_JSON},
+                    pref_disable_polling=False,
+                    pref_disable_new_entities=False,
+                    async_on_unload=MagicMock(),
+                )
+                coordinator = SimpleNamespace(
+                    data=data,
+                    last_update_success=True,
+                    config_entry=entry,
+                    async_add_listener=MagicMock(return_value=lambda: None),
+                    async_request_refresh=AsyncMock(),
+                )
+                entry.runtime_data = SimpleNamespace(
+                    coordinator=coordinator, client=client
+                )
+                hass.config_entries = MagicMock()
+                hass.config_entries.async_get_entry.return_value = entry
+                platform = EntityPlatform(
+                    hass=hass,
+                    logger=logging.getLogger(__name__),
+                    domain="button",
+                    platform_name="ha_geist",
+                    platform=None,
+                    scan_interval=timedelta(seconds=30),
+                    entity_namespace=None,
+                )
+                platform.config_entry = entry
+                tasks: list[asyncio.Task[None]] = []
+
+                def add_entities(entities: list[GeistAlarmAcknowledgeButton]) -> None:
+                    tasks.append(
+                        hass.async_create_task(platform.async_add_entities(entities))
+                    )
+
+                await async_setup_buttons(hass, entry, add_entities)  # type: ignore[arg-type]
+                listener = coordinator.async_add_listener.call_args.args[0]
+                active = Alarm(
+                    "device_analog_0_low_3",
+                    "Analog Low Alarm (limit 65)",
+                    "tripped",
+                    None,
+                    trigger_id="3",
+                    latching=True,
+                )
+                data.alarms = [
+                    active,
+                    Alarm("other", "Other Alarm", "tripped", None, trigger_id="2"),
+                ]
+                listener()
+                await asyncio.gather(*tasks)
+                button = platform.entities["button.device_analog_0_low_3_acknowledge"]
+                other_button = platform.entities["button.other_acknowledge"]
+                self.assertEqual(len(platform.entities), 2)
+                self.assertTrue(button.available)
+                await button.async_press()
+                client.async_acknowledge_alarm.assert_awaited_once_with("3")
+                coordinator.async_request_refresh.assert_awaited_once()
+
+                self.assertTrue(other_button.available)
+                await other_button.async_press()
+                client.async_acknowledge_alarm.assert_awaited_with("2")
+                self.assertEqual(coordinator.async_request_refresh.await_count, 2)
+
+                active.state = "latched"
+                self.assertTrue(button.available)
+                await button.async_press()
+                self.assertEqual(client.async_acknowledge_alarm.await_count, 3)
+
+                client.async_acknowledge_alarm.side_effect = (
+                    IntegrationBlueprintApiClientError("acknowledgement rejected")
+                )
+                with self.assertRaises(IntegrationBlueprintApiClientError):
+                    await button.async_press()
+                self.assertEqual(coordinator.async_request_refresh.await_count, 3)
+                client.async_acknowledge_alarm.reset_mock(side_effect=True)
+
+                active.state = "clear"
+                self.assertFalse(button.available)
+                with self.assertRaises(HomeAssistantError):
+                    await button.async_press()
+                client.async_acknowledge_alarm.assert_not_awaited()
+
+                other_alarm = data.alarms[1]
+                other_alarm.state = "clear"
+                self.assertFalse(other_button.available)
+                with self.assertRaises(HomeAssistantError):
+                    await other_button.async_press()
+                client.async_acknowledge_alarm.assert_not_awaited()
+
+                data.alarms = None
+                listener()
+                registry = er.async_get(hass)
+                self.assertIsNotNone(registry.async_get(button.entity_id))
+                data.alarms = [active]
+                active.latching = False
+                listener()
+                await hass.async_block_till_done()
+                self.assertIsNotNone(registry.async_get(button.entity_id))
+                self.assertIn(button.entity_id, platform.entities)
+                self.assertIsNone(registry.async_get(other_button.entity_id))
+                data.alarms = []
+                listener()
+                await hass.async_block_till_done()
+                self.assertIsNone(registry.async_get(button.entity_id))
+                self.assertNotIn(button.entity_id, platform.entities)
+                data.alarms = [active]
+                active.state = "latched"
+                listener()
+                await asyncio.gather(*tasks)
+                self.assertIn(button.entity_id, platform.entities)
+                await platform.async_reset()
+                await hass.async_stop(force=True)
+
+        asyncio.run(run())
+
+    def test_alarm_acknowledgement_requires_control_and_attaches_to_device(
+        self,
+    ) -> None:
+        """Only control accounts receive buttons, grouped with the target device."""
+        data = _parse_devices({"device-1": {"type": "other"}})
+        alarm = Alarm(
+            "device_1_analog_0_low_3",
+            "Analog Low Alarm (limit 65)",
+            "tripped",
+            "device-1",
+            trigger_id="3",
+            latching=True,
+        )
+        data.alarms = [alarm]
+        client = MagicMock(spec=GeistJsonApiClient)
+        client.can_control = False
+        coordinator = SimpleNamespace(
+            data=data,
+            last_update_success=True,
+            config_entry=SimpleNamespace(
+                entry_id="entry",
+                runtime_data=SimpleNamespace(client=client),
+            ),
+        )
+        entry = SimpleNamespace(
+            data={CONF_API_TYPE: API_TYPE_JSON},
+            runtime_data=SimpleNamespace(coordinator=coordinator, client=client),
+        )
+        add_entities = MagicMock()
+        asyncio.run(async_setup_buttons(None, entry, add_entities))  # type: ignore[arg-type]
+        add_entities.assert_not_called()
+        button = GeistAlarmAcknowledgeButton(coordinator, "entry", alarm)  # type: ignore[arg-type]
+        self.assertEqual(button.name, "Acknowledge Analog Low Alarm (limit 65)")
+        self.assertEqual(button.device_info["identifiers"], {("ha_geist", "device-1")})
+        self.assertFalse(button.available)
 
     def test_xml_alarm_registry_reconciles_additions_and_removals(self) -> None:
         """Only absent XML alarms are removed, and they can be added again."""

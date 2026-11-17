@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, Platform
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
@@ -19,13 +20,49 @@ from .api_json import GeistJsonApiClient
 from .const import API_TYPE_JSON, API_TYPE_XML, CONF_API_TYPE, DOMAIN, LOGGER
 from .coordinator import BlueprintDataUpdateCoordinator
 from .data import IntegrationBlueprintData
+from .entity import json_entity_id
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from .data import IntegrationBlueprintConfigEntry
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH]
+PLATFORMS: list[Platform] = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SWITCH,
+    Platform.BUTTON,
+]
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant, entry: IntegrationBlueprintConfigEntry
+) -> bool:
+    """Assign device-specific entity IDs to existing JSON entities once."""
+    if entry.version != 1:
+        return False
+    if entry.data.get(CONF_API_TYPE) == API_TYPE_JSON:
+        registry = er.async_get(hass)
+        alarm_prefix = f"{entry.entry_id}_alarm_"
+        for existing in er.async_entries_for_config_entry(registry, entry.entry_id):
+            if (
+                existing.platform != DOMAIN
+                or existing.domain not in {"sensor", "binary_sensor", "switch"}
+                or existing.unique_id.startswith(alarm_prefix)
+            ):
+                continue
+            desired_id = json_entity_id(existing.domain, existing.unique_id)
+            suffix = existing.entity_id.removeprefix(f"{desired_id}_")
+            if existing.entity_id == desired_id or (
+                suffix != existing.entity_id and suffix.isdecimal()
+            ):
+                continue
+            entity_id = registry.async_generate_entity_id(
+                existing.domain, existing.unique_id
+            )
+            registry.async_update_entity(existing.entity_id, new_entity_id=entity_id)
+    hass.config_entries.async_update_entry(entry, version=2)
+    return True
 
 
 # https://developers.home-assistant.io/docs/config_entries_index/#setting-up-an-entry

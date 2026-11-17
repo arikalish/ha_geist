@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api_json import GeistJsonApiClient
 from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
 from .coordinator import BlueprintDataUpdateCoordinator
+from .entity import json_entity_id
 from .types import JsonDevice, JsonParsedData, JsonRelay
 
 if TYPE_CHECKING:
@@ -64,6 +65,7 @@ class GeistRelaySwitch(CoordinatorEntity[BlueprintDataUpdateCoordinator], Switch
         self._relay_index = relay.index
         self._attr_name = relay.name
         self._attr_unique_id = f"{device.id}_relay_{relay.index}"
+        self.entity_id = json_entity_id("switch", self._attr_unique_id)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.id)},
             name=device.name,

@@ -25,6 +25,8 @@ class Alarm:
     state: str
     device_id: str | None
     attributes: dict[str, Any] = field(default_factory=dict)
+    trigger_id: str | None = None
+    latching: bool = False
 
 
 def unique_alarm_ids(alarms: list[Alarm]) -> list[Alarm]:
@@ -95,6 +97,23 @@ class JsonParsedData:
     devices: list[JsonDevice]
     raw: dict[str, Any]
     alarms: list[Alarm] | None = None
+
+
+def current_alarms(data: object) -> list[Alarm] | None:
+    """Return current alarm data, distinguishing missing data from an empty list."""
+    if isinstance(data, JsonParsedData):
+        return data.alarms
+    if isinstance(data, dict):
+        return data.get("alarms")
+    return None
+
+
+def find_alarm(data: object, alarm_id: str) -> Alarm | None:
+    """Find an alarm in the latest coordinator data."""
+    alarms = current_alarms(data)
+    if alarms is not None:
+        return next((alarm for alarm in alarms if alarm.id == alarm_id), None)
+    return None
 
 
 @dataclass

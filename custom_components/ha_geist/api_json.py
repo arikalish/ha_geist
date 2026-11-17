@@ -233,19 +233,31 @@ class GeistJsonApiClient:
                 IntegrationBlueprintApiClientError,
                 "The device returned an invalid alarm list",
             )
+        triggers = data["trigger"]
+        trigger_values = (
+            triggers.values() if isinstance(triggers, Mapping) else triggers
+        )
+        if any(not isinstance(trigger, Mapping) for trigger in trigger_values):
+            _raise_error(
+                IntegrationBlueprintApiClientError,
+                "The device returned an invalid alarm trigger",
+            )
         devices_by_id = {device.id: device for device in devices}
         alarms: list[Alarm] = []
-        for alarm_id, trigger in _items(data["trigger"]):
+        for alarm_id, trigger in _items(triggers):
             state = trigger.get("state")
             path = trigger.get("path")
             if (
-                not isinstance(state, str)
+                not alarm_id
+                or not isinstance(state, str)
                 or not state
                 or not isinstance(path, str)
                 or not path.strip("/")
             ):
-                LOGGER.warning("Skipping JSON alarm %s without state or path", alarm_id)
-                continue
+                _raise_error(
+                    IntegrationBlueprintApiClientError,
+                    f"JSON alarm {alarm_id!r} is missing an ID, state, or path",
+                )
             parts = path.strip("/").split("/")
             device = devices_by_id.get(parts[0])
             sensor_key = None
@@ -294,6 +306,8 @@ class GeistJsonApiClient:
                     name=name,
                     state=state,
                     device_id=device.id if device else None,
+                    trigger_id=alarm_id,
+                    latching=_is_enabled(trigger.get("latching")),
                     attributes={
                         key: trigger[key]
                         for key in (
@@ -317,6 +331,19 @@ class GeistJsonApiClient:
                 "The device returned duplicate alarm identities",
                 exception,
             )
+
+    async def async_acknowledge_alarm(self, trigger_id: str) -> None:
+        """Acknowledge a JSON alarm trigger."""
+        if not trigger_id:
+            _raise_error(ValueError, "An alarm trigger ID is required")
+        if not self._can_control:
+            _raise_error(
+                IntegrationBlueprintApiClientAuthenticationError,
+                "The configured user does not have alarm control permission",
+            )
+        await self._async_call(
+            f"/api/alarm/trigger/{quote(trigger_id, safe='')}", "ack"
+        )
 
     async def async_set_relay_state(
         self, device_id: str, relay_index: str, state: str
