@@ -391,6 +391,23 @@ class TestApiClients(unittest.TestCase):
         self.assertEqual(versions["Entertainment Center RSM"], "3.16.3")
         self.assertIsNone(versions["Temp Sensor"])
 
+    def test_xml_debug_log_includes_host_and_friendly_name(self) -> None:
+        """Log the configured connection host and XML server name."""
+        xml = '<server host="Office Monitor"><devices /></server>'
+        client = IntegrationBlueprintApiClient(
+            username=None,
+            password=None,
+            session=FakeSession([FakeResponse(text_data=xml)]),  # type: ignore[arg-type]
+            base_url="http://url-user:url-password@geist.local/data.xml",
+        )
+        with self.assertLogs("custom_components.ha_geist", level="DEBUG") as logs:
+            asyncio.run(client.async_get_data())
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            "Parsed data.xml: server_host=geist.local, server_name=Office Monitor, devices=0",
+        )
+        self.assertNotIn("url-password", "\n".join(logs.output))
+
     def test_xml_alarms_are_read_from_device_data(self) -> None:
         """Only configured XML alarms are exposed."""
         xml = (Path(__file__).parents[1] / "examples" / "data-em.xml").read_text()
@@ -2036,7 +2053,13 @@ class TestApiClients(unittest.TestCase):
             [
                 login_response("private-token"),
                 api_response(payload),
-                system_response(),
+                api_response(
+                    {
+                        "model": "BB-REL-THA4",
+                        "serialNumber": "controller-serial",
+                        "label": "Office Monitor",
+                    }
+                ),
                 api_response(alarm_data),
             ]
         )
@@ -2056,13 +2079,34 @@ class TestApiClients(unittest.TestCase):
         self.assertEqual(
             [record.getMessage() for record in logs.records],
             [
-                "Parsed JSON device data: server_host=geist.local, devices=2, "
+                "Parsed JSON device data: server_host=geist.local, server_name=Office Monitor, devices=2, "
                 "measurements=2, relays=1",
-                "Parsed JSON alarm data: server_host=geist.local, alarms=1",
+                "Parsed JSON alarm data: server_host=geist.local, server_name=Office Monitor, alarms=1",
             ],
         )
         for secret in ("private-token", "private-password", "url-user", "url-password"):
             self.assertNotIn(secret, "\n".join(logs.output))
+
+    def test_json_debug_log_handles_missing_server_label(self) -> None:
+        """Missing or unavailable metadata does not prevent update logging."""
+        for system in (system_response(), api_response(ret_code=1)):
+            with self.subTest(system=system._json_data):  # noqa: SLF001
+                client = GeistJsonApiClient(
+                    "user",
+                    "password",
+                    FakeSession([login_response(), api_response({}), system]),  # type: ignore[arg-type]
+                    "http://geist.local",
+                )
+                with self.assertLogs(
+                    "custom_components.ha_geist", level="DEBUG"
+                ) as logs:
+                    asyncio.run(client.async_get_data())
+                messages = [record.getMessage() for record in logs.records]
+                self.assertIn(
+                    "Parsed JSON device data: server_host=geist.local, server_name=None, "
+                    "devices=0, measurements=0, relays=0",
+                    messages,
+                )
 
     def test_json_sensor_types_and_icons(self) -> None:
         """Measurement and analog metadata produce matching HA icons and types."""

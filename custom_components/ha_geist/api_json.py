@@ -178,13 +178,6 @@ class GeistJsonApiClient:
                 "The device API returned an invalid device list",
             )
         parsed = _parse_devices(data)
-        LOGGER.debug(
-            "Parsed JSON device data: server_host=%s, devices=%d, measurements=%d, relays=%d",
-            urlsplit(self._base_url).hostname,
-            len(parsed.devices),
-            sum(len(device.sensors) for device in parsed.devices),
-            sum(len(device.relays) for device in parsed.devices),
-        )
         system_info_loaded = False
         if self._system_info is None:
             try:
@@ -222,7 +215,20 @@ class GeistJsonApiClient:
                         "model %s",
                         model,
                     )
+        LOGGER.debug(
+            "Parsed JSON device data: server_host=%s, server_name=%s, devices=%d, measurements=%d, relays=%d",
+            urlsplit(self._base_url).hostname,
+            self._server_name(),
+            len(parsed.devices),
+            sum(len(device.sensors) for device in parsed.devices),
+            sum(len(device.relays) for device in parsed.devices),
+        )
         return parsed
+
+    def _server_name(self) -> str | None:
+        """Return the controller's configured label when available."""
+        label = self._system_info.get("label") if self._system_info else None
+        return label.strip() if isinstance(label, str) and label.strip() else None
 
     @property
     def can_control(self) -> bool:
@@ -339,8 +345,9 @@ class GeistJsonApiClient:
                 exception,
             )
         LOGGER.debug(
-            "Parsed JSON alarm data: server_host=%s, alarms=%d",
+            "Parsed JSON alarm data: server_host=%s, server_name=%s, alarms=%d",
             urlsplit(self._base_url).hostname,
+            self._server_name(),
             len(alarms),
         )
         return alarms

@@ -21,7 +21,8 @@ The legacy XML API creates sensors from each device's `<field>` elements. The
 JSON API creates sensors from device measurements and analog inputs, and a
 switch for each relay. Relay switches send explicit on/off commands and refresh
 the device state afterward. Data is polled every 30 seconds. Debug logs summarize
-JSON device, measurement, relay and alarm counts without logging credentials.
+the host, friendly name and JSON device, measurement, relay and alarm counts
+without logging credentials.
 
 Configured alarms are exposed as read-only sensors. Their names include reported
 thresholds, and their entity IDs include the target, comparison type, and alarm

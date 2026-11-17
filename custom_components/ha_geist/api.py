@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import xml.etree.ElementTree as ET
 from typing import Any
+from urllib.parse import urlsplit
 
 import aiohttp
 import async_timeout
@@ -239,7 +240,8 @@ class IntegrationBlueprintApiClient:
                 text = await response.text()
                 parsed = _parse_xml(text)
                 LOGGER.debug(
-                    "Parsed data.xml: server_host=%s, devices=%d",
+                    "Parsed data.xml: server_host=%s, server_name=%s, devices=%d",
+                    urlsplit(url).hostname,
                     ET.fromstring(text).attrib.get("host"),
                     len(parsed.get("devices", [])),
                 )
