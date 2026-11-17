@@ -16,6 +16,7 @@ from .api import (
     IntegrationBlueprintApiClientCommunicationError,
     IntegrationBlueprintApiClientError,
 )
+from .const import LOGGER
 from .types import JsonDevice, JsonParsedData, JsonRelay, JsonSensor
 
 _SUCCESS = 0
@@ -69,7 +70,6 @@ def _parse_devices(payload: Any) -> JsonParsedData:
     for device_id, source in _items(device_payload):
         sensors: list[JsonSensor] = []
         for entity_index, entity in _items(source.get("entity")):
-            entity_name = str(entity.get("name") or "")
             for measurement_index, measurement in _items(entity.get("measurement")):
                 measurement_type = str(measurement.get("type") or measurement_index)
                 name = str(
@@ -79,9 +79,15 @@ def _parse_devices(payload: Any) -> JsonParsedData:
                 sensors.append(
                     JsonSensor(
                         key=f"entity_{entity_index}_{measurement_index}",
-                        name=f"{entity_name} {name}".strip(),
+                        name=name,
                         value=measurement.get("value"),
                         unit=measurement.get("units"),
+                        measurement_type=str(measurement["type"])
+                        if measurement.get("type") is not None
+                        else None,
+                        measurement_name=str(measurement["name"])
+                        if measurement.get("name") is not None
+                        else None,
                     )
                 )
 
@@ -96,6 +102,7 @@ def _parse_devices(payload: Any) -> JsonParsedData:
                     ),
                     value=analog.get("value"),
                     unit=analog.get("units"),
+                    measurement_type="analog",
                 )
             )
 
@@ -118,6 +125,9 @@ def _parse_devices(payload: Any) -> JsonParsedData:
                 model=str(source.get("type") or ""),
                 sensors=sensors,
                 relays=relays,
+                serial_number=(
+                    device_id if str(source.get("type") or "").lower() == "ccat" else None
+                ),
             )
         )
 
@@ -143,6 +153,7 @@ class GeistJsonApiClient:
             self._base_url = self._base_url[: -len("/data.xml")]
         self._token: str | None = None
         self._can_control = False
+        self._system_info: Mapping[str, Any] | None = None
 
     async def async_get_data(self) -> JsonParsedData:
         """Fetch current device data, refreshing an expired token once."""
@@ -155,7 +166,43 @@ class GeistJsonApiClient:
                 IntegrationBlueprintApiClientError,
                 "The device API returned an invalid device list",
             )
-        return _parse_devices(data)
+        parsed = _parse_devices(data)
+        system_info_loaded = False
+        if self._system_info is None:
+            try:
+                system_response = await self._async_send("/api/sys", None)
+                self._check_response(system_response)
+                system_data = system_response.get("data")
+                if not isinstance(system_data, Mapping):
+                    _raise_error(
+                        IntegrationBlueprintApiClientError,
+                        "The device returned invalid system metadata",
+                    )
+                self._system_info = system_data
+                system_info_loaded = True
+            except IntegrationBlueprintApiClientError as exception:
+                LOGGER.warning("Unable to retrieve device system metadata: %s", exception)
+
+        if self._system_info is not None:
+            model = self._system_info.get("model")
+            serial = self._system_info.get("serialNumber")
+            if isinstance(model, str) and model:
+                matches = [device for device in parsed.devices if device.model == model]
+                if len(matches) == 1:
+                    if isinstance(serial, str) and serial.strip().lower() not in {
+                        "",
+                        "unset",
+                    }:
+                        matches[0].serial_number = serial.strip()
+                    elif serial is None or isinstance(serial, str):
+                        matches[0].serial_number = matches[0].id
+                elif system_info_loaded:
+                    LOGGER.warning(
+                        "Cannot match controller metadata to exactly one device with "
+                        "model %s",
+                        model,
+                    )
+        return parsed
 
     @property
     def can_control(self) -> bool:
@@ -242,15 +289,17 @@ class GeistJsonApiClient:
         self._check_response(response)
         return response
 
-    async def _async_send(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """POST a JSON command to the device."""
+    async def _async_send(
+        self, path: str, payload: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Send a JSON command or retrieve public system metadata."""
         try:
             async with (
                 async_timeout.timeout(15),
                 self._session.request(
-                    method="POST",
+                    method="POST" if payload is not None else "GET",
                     url=f"{self._base_url}{path}",
-                    json=payload,
+                    **({"json": payload} if payload is not None else {}),
                 ) as response,
             ):
                 if response.status in (401, 403):

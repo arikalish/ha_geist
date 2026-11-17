@@ -11,7 +11,8 @@ import math
 import re
 from typing import TYPE_CHECKING
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor.const import DEVICE_CLASS_UNITS
 from homeassistant.const import (
     PERCENTAGE,
     UnitOfApparentPower,
@@ -33,6 +34,38 @@ if TYPE_CHECKING:
 
     from .coordinator import BlueprintDataUpdateCoordinator
     from .data import IntegrationBlueprintConfigEntry
+
+
+_JSON_SENSOR_FIELDS = {
+    "temperature": "TempC",
+    "temp": "TempC",
+    "dewpoint": "DewPtC",
+    "humidity": "Humidity",
+    "relativehumidity": "Humidity",
+    "voltage": "Volt",
+    "volts": "Volt",
+    "current": "Amps",
+    "amps": "Amps",
+    "powerfactor": "Pwr-Factor",
+    "sound": "Sound",
+    "airflow": "Airflow",
+    "light": "Light",
+    "analog": "IO",
+    "realpower": "RealPower",
+    "power": "RealPower",
+    "apparentpower": "ApPower",
+}
+
+_FIELD_DEVICE_CLASSES = {
+    "TempC": SensorDeviceClass.TEMPERATURE,
+    "DewPtC": SensorDeviceClass.TEMPERATURE,
+    "Humidity": SensorDeviceClass.HUMIDITY,
+    "Volt": SensorDeviceClass.VOLTAGE,
+    "Amps": SensorDeviceClass.CURRENT,
+    "Pwr-Factor": SensorDeviceClass.POWER_FACTOR,
+    "RealPower": SensorDeviceClass.POWER,
+    "ApPower": SensorDeviceClass.APPARENT_POWER,
+}
 
 
 async def async_setup_entry(
@@ -79,6 +112,7 @@ async def async_setup_entry(
                     manufacturer=manufacturer,
                     model=model,
                     serial_number=dev.serial_number,
+                    sw_version=dev.sw_version,
                     field_key=key,
                     nice_name=nice,
                 )
@@ -99,6 +133,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         manufacturer: str | None,
         model: str | None,
         serial_number: str | None,
+        sw_version: str | None,
         field_key: str,
         nice_name: str,
     ) -> None:
@@ -106,7 +141,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         super().__init__(coordinator)
         self._device_id = device_id
         self._field_key = field_key
-        self._attr_name = nice_name
+        self._attr_name = "Relative Humidity" if field_key == "Humidity" else nice_name
         # Make unique id per entity using the device `id` and field key
         self._attr_unique_id = f"{device_id}_{field_key}"
         # DeviceInfo for grouping sensors under a Home Assistant device
@@ -116,7 +151,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             manufacturer=manufacturer,
             model=model,
             serial_number=serial_number,
-            # sw_version=sw_version,
+            sw_version=sw_version,
         )
 
         # Unit of measurement
@@ -227,12 +262,38 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
             "C": UnitOfTemperature.CELSIUS,
             "F": UnitOfTemperature.FAHRENHEIT,
         }.get(sensor.unit or "", sensor.unit or None)
+        field_key = None
+        for value in (sensor.measurement_type, sensor.measurement_name):
+            if value:
+                field_key = _JSON_SENSOR_FIELDS.get(
+                    re.sub(r"[^a-z0-9]", "", value.lower())
+                )
+                if field_key:
+                    break
+        if field_key:
+            if field_key == "Humidity":
+                self._attr_name = "Relative Humidity"
+            self._attr_icon = FieldSensor.icon_for_field_key(field_key)
+            device_class = _FIELD_DEVICE_CLASSES.get(field_key)
+            if (
+                field_key == "Humidity"
+                and self._attr_native_unit_of_measurement is None
+            ):
+                self._attr_native_unit_of_measurement = PERCENTAGE
+            if (
+                device_class
+                and self._attr_native_unit_of_measurement
+                in DEVICE_CLASS_UNITS[device_class]
+            ):
+                self._attr_device_class = device_class
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.id)},
             name=device.name,
             manufacturer="Geist",
             model=device.model or None,
         )
+        if device.serial_number:
+            self._attr_device_info["serial_number"] = device.serial_number
 
     @property
     def native_value(self) -> float | None:

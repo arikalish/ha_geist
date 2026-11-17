@@ -70,6 +70,8 @@ class GeistRelaySwitch(CoordinatorEntity[BlueprintDataUpdateCoordinator], Switch
             manufacturer="Geist",
             model=device.model or None,
         )
+        if device.serial_number:
+            self._attr_device_info["serial_number"] = device.serial_number
 
     @property
     def is_on(self) -> bool:

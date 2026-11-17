@@ -3,9 +3,20 @@
         "step": {
             "user": {
                 "title": "Connect to a Geist device",
-                "description": "Enter the device host and credentials. The integration detects whether the device uses the XML or JSON API.",
+                "description": "Enter the device URL, an optional name for this entry and, if required, its credentials. The integration detects whether the device uses the XML or JSON API.",
                 "data": {
                     "url": "Device URL",
+                    "name": "Name",
+                    "username": "Username",
+                    "password": "Password"
+                }
+            },
+            "reconfigure": {
+                "title": "Update Geist device connection",
+                "description": "Update the device URL, entry name and optional credentials. Clear the username and password to connect without authentication.",
+                "data": {
+                    "url": "Device URL",
+                    "name": "Name",
                     "username": "Username",
                     "password": "Password"
                 }
@@ -14,10 +25,12 @@
         "error": {
             "auth": "The username or password is wrong, or the account lacks the required permissions.",
             "connection": "Unable to connect to the server.",
+            "already_configured": "This device URL is already configured.",
             "unknown": "Unknown error occurred."
         },
         "abort": {
-            "already_configured": "This entry is already configured."
+            "already_configured": "This entry is already configured.",
+            "reconfigure_successful": "The device connection was updated."
         }
     }
 }

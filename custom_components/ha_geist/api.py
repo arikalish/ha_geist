@@ -113,7 +113,11 @@ class IntegrationBlueprintApiClient:
                             available=device_elem.attrib.get("available"),
                             index=device_elem.attrib.get("index"),
                             manufacturer=server_company_local,
-                            sw_version=server_sw_version_local,
+                            sw_version=(
+                                server_sw_version_local
+                                if device_elem.attrib.get("index") == "0"
+                                else None
+                            ),
                             serial_number=device_elem.attrib.get("id"),
                         )
 

@@ -10,15 +10,30 @@ import json
 import unittest
 from http import HTTPStatus
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from custom_components.ha_geist.api import (
     IntegrationBlueprintApiClient,
     IntegrationBlueprintApiClientAuthenticationError,
 )
-from custom_components.ha_geist.api_json import GeistJsonApiClient
+from custom_components.ha_geist.api_json import GeistJsonApiClient, _parse_devices
+from custom_components.ha_geist.coordinator import BlueprintDataUpdateCoordinator
+from custom_components.ha_geist.sensor import (
+    FieldSensor,
+    JsonSensorEntity,
+)
+from custom_components.ha_geist.sensor import (
+    async_setup_entry as async_setup_sensors,
+)
+from custom_components.ha_geist.switch import GeistRelaySwitch
+from custom_components.ha_geist.types import Device
 
-EXPECTED_READ_ONLY_REQUESTS = 2
+EXPECTED_READ_ONLY_REQUESTS = 3
 
 
 class FakeResponse:
@@ -107,6 +122,11 @@ def login_response(
     return api_response({"token": session_key, "control": control, "admin": "false"})
 
 
+def system_response(serial: str = "controller-serial") -> FakeResponse:
+    """Create public controller metadata."""
+    return api_response({"model": "BB-REL-THA4", "serialNumber": serial})
+
+
 class TestApiClients(unittest.TestCase):
     """Validate the XML and JSON API clients."""
 
@@ -126,9 +146,27 @@ class TestApiClients(unittest.TestCase):
         self.assertEqual(result["devices"][0].fields["TempC"].value, "25.00")
         self.assertEqual(result["devices"][0].manufacturer, "Geist")
         self.assertEqual(result["devices"][0].sw_version, "3.16.3")
+        self.assertIsNone(result["devices"][1].sw_version)
         self.assertEqual(result["devices"][0].serial_number, "01D9BCD512000084")
         self.assertEqual(result["devices"][1].serial_number, "EA00000132301A28")
         self.assertEqual(session.requests[0]["url"], "http://geist.local/data.xml")
+
+        coordinator = SimpleNamespace(
+            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
+            data=result,
+        )
+        entry = SimpleNamespace(
+            data={}, runtime_data=SimpleNamespace(coordinator=coordinator)
+        )
+        add_entities = MagicMock()
+        asyncio.run(async_setup_sensors(None, entry, add_entities))  # type: ignore[arg-type]
+        entities = add_entities.call_args.args[0]
+        versions = {
+            entity.device_info["name"]: entity.device_info["sw_version"]
+            for entity in entities
+        }
+        self.assertEqual(versions["Entertainment Center RSM"], "3.16.3")
+        self.assertIsNone(versions["Temp Sensor"])
 
     def test_json_api_authenticates_and_parses_measurements(self) -> None:
         """The JSON API client logs in and maps measurements and relays."""
@@ -157,9 +195,22 @@ class TestApiClients(unittest.TestCase):
                         "offLabel": "Off",
                     }
                 },
-            }
+            },
+            "device-2": {
+                "type": "ccat",
+                "entity": {
+                    "0": {
+                        "measurement": {
+                            "0": {"type": "temperature", "value": "20", "units": "C"}
+                        }
+                    }
+                },
+            },
+            "device-3": {"type": "other"},
         }
-        session = FakeSession([login_response(), api_response(payload)])
+        session = FakeSession(
+            [login_response(), api_response(payload), system_response()]
+        )
         client = GeistJsonApiClient(
             "test-user",
             "not-a-real-password",
@@ -169,17 +220,170 @@ class TestApiClients(unittest.TestCase):
 
         result = asyncio.run(client.async_get_data())
 
-        self.assertEqual(result.devices[0].sensors[0].name, "Climate Temperature")
+        self.assertEqual(result.devices[0].sensors[0].name, "Temperature")
         self.assertEqual(result.devices[0].sensors[0].value, "72.5")
         self.assertEqual(result.devices[0].relays[0].state, "off")
+        self.assertEqual(result.devices[0].serial_number, "controller-serial")
+        self.assertEqual(result.devices[1].serial_number, "device-2")
+        self.assertIsNone(result.devices[2].serial_number)
+        coordinator = SimpleNamespace(
+            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
+            data=result,
+        )
+        sensor = JsonSensorEntity(
+            coordinator, result.devices[0], result.devices[0].sensors[0]  # type: ignore[arg-type]
+        )
+        switch = GeistRelaySwitch(
+            coordinator, result.devices[0], result.devices[0].relays[0]  # type: ignore[arg-type]
+        )
+        sensor_info = sensor.device_info
+        switch_info = switch.device_info
+        assert sensor_info is not None
+        assert switch_info is not None
+        self.assertEqual(sensor_info.get("serial_number"), "controller-serial")
+        self.assertEqual(switch_info.get("serial_number"), "controller-serial")
+        ccat_sensor = JsonSensorEntity(
+            coordinator, result.devices[1], result.devices[1].sensors[0]  # type: ignore[arg-type]
+        )
+        ccat_info = ccat_sensor.device_info
+        assert ccat_info is not None
+        self.assertEqual(ccat_info.get("serial_number"), "device-2")
         self.assertEqual(
             session.requests[0]["url"], "http://geist.local/api/auth/test-user"
         )
         self.assertEqual(session.requests[1]["json"]["token"], "sample-session-id")
+        self.assertEqual(session.requests[2]["method"], "GET")
+        self.assertEqual(session.requests[2]["url"], "http://geist.local/api/sys")
+
+    def test_json_sensor_types_and_icons(self) -> None:
+        """Measurement and analog metadata produce matching HA icons and types."""
+        result = _parse_devices(
+            {
+                "device-1": {
+                    "entity": {
+                        "0": {
+                            "name": "Climate",
+                            "measurement": {
+                                "0": {
+                                    "type": "temperature",
+                                    "value": "72",
+                                    "units": "F",
+                                },
+                                "1": {"type": "dew_point", "value": "46", "units": "F"},
+                                "2": {
+                                    "type": "unknown",
+                                    "name": "Humidity",
+                                    "value": "30",
+                                },
+                                "3": {"type": "other", "value": "5"},
+                            },
+                        }
+                    },
+                    "analog": {"0": {"name": "Analog 1", "value": "100"}},
+                }
+            }
+        )
+        device = result.devices[0]
+        coordinator = SimpleNamespace(
+            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
+            data=result,
+        )
+        entities = [
+            JsonSensorEntity(coordinator, device, sensor)  # type: ignore[arg-type]
+            for sensor in device.sensors
+        ]
+        self.assertEqual(entities[0].name, "Temperature")
+        self.assertEqual(entities[1].name, "Dew Point")
+        self.assertEqual(entities[2].name, "Relative Humidity")
+        self.assertEqual(entities[2].unique_id, "device-1_entity_0_2")
+        self.assertEqual(entities[2].native_value, 30.0)
+        self.assertEqual(entities[4].name, "Analog 1")
+        for entity, icon, device_class, unit in zip(
+            entities,
+            (
+                "mdi:thermometer",
+                "mdi:thermometer-water",
+                "mdi:water-percent",
+                None,
+                "mdi:chart-line-variant",
+            ),
+            (
+                SensorDeviceClass.TEMPERATURE,
+                SensorDeviceClass.TEMPERATURE,
+                SensorDeviceClass.HUMIDITY,
+                None,
+                None,
+            ),
+            ("°F", "°F", "%", None, None),
+            strict=True,
+        ):
+            with self.subTest(sensor=entity.name):
+                entity.hass = SimpleNamespace(  # type: ignore[assignment]
+                    config=SimpleNamespace(units=US_CUSTOMARY_SYSTEM)
+                )
+                self.assertEqual(entity.icon, icon)
+                self.assertEqual(entity.device_class, device_class)
+                self.assertEqual(entity.native_unit_of_measurement, unit)
+                self.assertIsNotNone(entity.state)
+
+    def test_xml_humidity_entity_uses_relative_humidity_name(self) -> None:
+        """XML humidity uses the same name and percentage unit as JSON."""
+        coordinator = SimpleNamespace(
+            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
+            data={"devices": []},
+        )
+        entity = FieldSensor(
+            coordinator=coordinator,  # type: ignore[arg-type]
+            device_id="device-1",
+            device_name="Climate",
+            manufacturer=None,
+            model=None,
+            serial_number=None,
+            sw_version=None,
+            field_key="Humidity",
+            nice_name="Humidity",
+        )
+
+        self.assertEqual(entity.name, "Relative Humidity")
+        self.assertEqual(entity.native_unit_of_measurement, "%")
+
+    def test_json_unknown_unit_does_not_assign_incompatible_device_class(self) -> None:
+        """An unrecognized unit cannot result in an invalid HA sensor class."""
+        result = _parse_devices(
+            {
+                "device-1": {
+                    "entity": {
+                        "0": {
+                            "measurement": {
+                                "0": {
+                                    "type": "temperature",
+                                    "value": "20",
+                                    "units": "unknown",
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        device = result.devices[0]
+        coordinator = SimpleNamespace(
+            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
+            data=result,
+        )
+        entity = JsonSensorEntity(
+            coordinator, device, device.sensors[0]  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(entity.icon, "mdi:thermometer")
+        self.assertIsNone(entity.device_class)
+        self.assertEqual(entity.native_unit_of_measurement, "unknown")
 
     def test_json_relay_command_uses_control_payload(self) -> None:
         """Relay control is sent only through the explicit on/off API command."""
-        session = FakeSession([login_response(), api_response({}), api_response({})])
+        session = FakeSession(
+            [login_response(), api_response({}), system_response(), api_response({})]
+        )
         client = GeistJsonApiClient(
             "test-user",
             "not-a-real-password",
@@ -193,7 +397,7 @@ class TestApiClients(unittest.TestCase):
 
         asyncio.run(run())
 
-        request = session.requests[2]
+        request = session.requests[3]
         self.assertEqual(request["url"], "http://geist.local/api/dev/device-1/relay/0")
         self.assertEqual(
             request["json"],
@@ -206,7 +410,9 @@ class TestApiClients(unittest.TestCase):
 
     def test_json_read_only_account_cannot_send_relay_command(self) -> None:
         """A read-only account fails before any relay control request is sent."""
-        session = FakeSession([login_response(control="false"), api_response({})])
+        session = FakeSession(
+            [login_response(control="false"), api_response({}), system_response()]
+        )
         client = GeistJsonApiClient(
             "test-user",
             "not-a-real-password",
@@ -231,6 +437,7 @@ class TestApiClients(unittest.TestCase):
                 api_response(ret_code=1002),
                 login_response("new-session"),
                 api_response({}),
+                system_response(),
             ]
         )
         client = GeistJsonApiClient(
@@ -247,7 +454,9 @@ class TestApiClients(unittest.TestCase):
 
     def test_json_client_reuses_token_between_updates(self) -> None:
         """Polling reuses a valid token instead of logging in on every refresh."""
-        session = FakeSession([login_response(), api_response({}), api_response({})])
+        session = FakeSession(
+            [login_response(), api_response({}), system_response(), api_response({})]
+        )
         client = GeistJsonApiClient(
             "test-user",
             "not-a-real-password",
@@ -261,8 +470,165 @@ class TestApiClients(unittest.TestCase):
 
         asyncio.run(run())
 
-        self.assertEqual(len(session.requests), 3)
-        self.assertEqual(session.requests[2]["json"]["token"], "sample-session-id")
+        self.assertEqual(len(session.requests), 4)
+        self.assertEqual(session.requests[3]["json"]["token"], "sample-session-id")
+
+    def test_json_controller_uses_id_when_serial_is_unset(self) -> None:
+        """A uniquely matched controller uses its ID when its serial is unset."""
+        for serial in ("unset", ""):
+            with self.subTest(serial=serial):
+                session = FakeSession(
+                    [
+                        login_response(),
+                        api_response({"device-1": {"type": "BB-REL-THA4"}}),
+                        system_response(serial),
+                    ]
+                )
+                client = GeistJsonApiClient(
+                    "test-user",
+                    "not-a-real-password",
+                    session,  # type: ignore[arg-type]
+                    "http://geist.local",
+                )
+                result = asyncio.run(client.async_get_data())
+                self.assertEqual(result.devices[0].serial_number, "device-1")
+
+    def test_json_system_serial_requires_unique_model(self) -> None:
+        """Do not assign a system serial when multiple devices match the model."""
+        devices = {
+            "device-1": {"type": "BB-REL-THA4"},
+            "device-2": {"type": "BB-REL-THA4"},
+        }
+        session = FakeSession(
+            [login_response(), api_response(devices), system_response()]
+        )
+        client = GeistJsonApiClient(
+            "test-user",
+            "not-a-real-password",
+            session,  # type: ignore[arg-type]
+            "http://geist.local",
+        )
+
+        with self.assertLogs("custom_components.ha_geist", level="WARNING"):
+            result = asyncio.run(client.async_get_data())
+        self.assertTrue(all(device.serial_number is None for device in result.devices))
+
+    def test_json_system_metadata_failure_is_retried(self) -> None:
+        """Unavailable optional metadata does not stop device polling."""
+        payload = {"device-1": {"type": "BB-REL-THA4"}}
+        session = FakeSession(
+            [
+                login_response(),
+                api_response(payload),
+                FakeResponse(status=HTTPStatus.FORBIDDEN),
+                api_response(payload),
+                system_response(),
+            ]
+        )
+        client = GeistJsonApiClient(
+            "test-user",
+            "not-a-real-password",
+            session,  # type: ignore[arg-type]
+            "http://geist.local",
+        )
+
+        async def run() -> None:
+            with self.assertLogs("custom_components.ha_geist", level="WARNING"):
+                first = await client.async_get_data()
+            second = await client.async_get_data()
+            self.assertIsNone(first.devices[0].serial_number)
+            self.assertEqual(second.devices[0].serial_number, "controller-serial")
+
+        asyncio.run(run())
+
+    def test_json_recovered_serial_updates_registered_device(self) -> None:
+        """A serial recovered after setup updates the existing HA device."""
+        device_data = _parse_devices({"device-1": {"type": "BB-REL-THA4"}})
+        device_data.devices[0].serial_number = "controller-serial"
+        registry = SimpleNamespace(
+            async_get_device=MagicMock(
+                return_value=SimpleNamespace(id="registry-id", serial_number=None)
+            ),
+            async_update_device=MagicMock(),
+        )
+        coordinator = SimpleNamespace(
+            hass=object(),
+            config_entry=SimpleNamespace(
+                runtime_data=SimpleNamespace(
+                    client=SimpleNamespace(async_get_data=AsyncMock(return_value=device_data))
+                )
+            ),
+        )
+        with patch(
+            "custom_components.ha_geist.coordinator.dr.async_get", return_value=registry
+        ):
+            result = asyncio.run(
+                BlueprintDataUpdateCoordinator._async_update_data(coordinator)  # type: ignore[arg-type]
+            )
+
+        self.assertIs(result, device_data)
+        registry.async_get_device.assert_called_once_with(
+            identifiers={("ha_geist", "device-1")}
+        )
+        registry.async_update_device.assert_called_once_with(
+            "registry-id", serial_number="controller-serial"
+        )
+
+    def test_xml_firmware_updates_host_and_clears_owned_external_device(self) -> None:
+        """Only the host owns XML firmware; shared devices remain untouched."""
+        devices = [
+            Device(id="host", name="Host", index="0", sw_version="3.16.3"),
+            Device(id="external", name="External", index="1"),
+            Device(id="shared", name="Shared", index="2"),
+            Device(id="unknown", name="Unknown"),
+        ]
+        entries = {
+            "host": SimpleNamespace(id="host-registry", sw_version="old"),
+            "external": SimpleNamespace(
+                id="external-registry", sw_version="old", config_entries={"entry-id"}
+            ),
+            "shared": SimpleNamespace(
+                id="shared-registry",
+                sw_version="old",
+                config_entries={"entry-id", "other-entry"},
+            ),
+            "unknown": SimpleNamespace(
+                id="unknown-registry",
+                sw_version="old",
+                config_entries={"entry-id"},
+            ),
+        }
+        registry = SimpleNamespace(
+            async_get_device=MagicMock(
+                side_effect=lambda identifiers: entries.get(next(iter(identifiers))[1])
+            ),
+            async_update_device=MagicMock(),
+        )
+        data = {"devices": devices, "raw": ""}
+        coordinator = SimpleNamespace(
+            hass=object(),
+            config_entry=SimpleNamespace(
+                entry_id="entry-id",
+                runtime_data=SimpleNamespace(
+                    client=SimpleNamespace(async_get_data=AsyncMock(return_value=data))
+                ),
+            ),
+        )
+        with patch(
+            "custom_components.ha_geist.coordinator.dr.async_get", return_value=registry
+        ):
+            result = asyncio.run(
+                BlueprintDataUpdateCoordinator._async_update_data(coordinator)  # type: ignore[arg-type]
+            )
+
+        self.assertIs(result, data)
+        self.assertEqual(registry.async_update_device.call_count, 2)
+        registry.async_update_device.assert_any_call(
+            "host-registry", sw_version="3.16.3"
+        )
+        registry.async_update_device.assert_any_call(
+            "external-registry", sw_version=None
+        )
 
     def test_json_client_rejects_invalid_login(self) -> None:
         """Invalid passwords surface as authentication errors."""

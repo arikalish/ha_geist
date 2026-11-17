@@ -30,6 +30,8 @@ class JsonSensor:
     name: str
     value: Any
     unit: Optional[str]
+    measurement_type: Optional[str] = None
+    measurement_name: Optional[str] = None
 
 
 @dataclass
@@ -52,6 +54,7 @@ class JsonDevice:
     model: str
     sensors: list[JsonSensor] = field(default_factory=list)
     relays: list[JsonRelay] = field(default_factory=list)
+    serial_number: Optional[str] = None
 
 
 @dataclass
