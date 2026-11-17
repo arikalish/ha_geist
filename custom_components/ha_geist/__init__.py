@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from .data import IntegrationBlueprintConfigEntry
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH]
 
 
 # https://developers.home-assistant.io/docs/config_entries_index/#setting-up-an-entry

@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import aiohttp
 import async_timeout
+from homeassistant.util import slugify
 
 from .api import (
     IntegrationBlueprintApiClientAuthenticationError,
@@ -17,7 +18,14 @@ from .api import (
     IntegrationBlueprintApiClientError,
 )
 from .const import LOGGER
-from .types import JsonDevice, JsonParsedData, JsonRelay, JsonSensor
+from .types import (
+    Alarm,
+    JsonDevice,
+    JsonParsedData,
+    JsonRelay,
+    JsonSensor,
+    unique_alarm_ids,
+)
 
 _SUCCESS = 0
 _SESSION_EXPIRED = 1002
@@ -127,7 +135,9 @@ def _parse_devices(payload: Any) -> JsonParsedData:
                 sensors=sensors,
                 relays=relays,
                 serial_number=(
-                    device_id if str(source.get("type") or "").lower() == "ccat" else None
+                    device_id
+                    if str(source.get("type") or "").lower() == "ccat"
+                    else None
                 ),
             )
         )
@@ -182,7 +192,9 @@ class GeistJsonApiClient:
                 self._system_info = system_data
                 system_info_loaded = True
             except IntegrationBlueprintApiClientError as exception:
-                LOGGER.warning("Unable to retrieve device system metadata: %s", exception)
+                LOGGER.warning(
+                    "Unable to retrieve device system metadata: %s", exception
+                )
 
         if self._system_info is not None:
             model = self._system_info.get("model")
@@ -209,6 +221,102 @@ class GeistJsonApiClient:
     def can_control(self) -> bool:
         """Return whether the authenticated user may control relays."""
         return self._can_control
+
+    async def async_get_alarms(self, devices: list[JsonDevice]) -> list[Alarm]:
+        """Read configured alarm triggers and their states."""
+        response = await self._async_call("/api/alarm", "get")
+        data = response.get("data")
+        if not isinstance(data, Mapping) or not isinstance(
+            data.get("trigger"), (Mapping, list)
+        ):
+            _raise_error(
+                IntegrationBlueprintApiClientError,
+                "The device returned an invalid alarm list",
+            )
+        devices_by_id = {device.id: device for device in devices}
+        alarms: list[Alarm] = []
+        for alarm_id, trigger in _items(data["trigger"]):
+            state = trigger.get("state")
+            path = trigger.get("path")
+            if (
+                not isinstance(state, str)
+                or not state
+                or not isinstance(path, str)
+                or not path.strip("/")
+            ):
+                LOGGER.warning("Skipping JSON alarm %s without state or path", alarm_id)
+                continue
+            parts = path.strip("/").split("/")
+            device = devices_by_id.get(parts[0])
+            sensor_key = None
+            match parts:
+                case [_, "analog", index]:
+                    sensor_key = f"analog_{index}"
+                case [_, "entity", index, "measurement", measurement]:
+                    sensor_key = f"entity_{index}_{measurement}"
+            sensor_name = None
+            if device and sensor_key:
+                sensor_name = next(
+                    (
+                        sensor.name
+                        for sensor in device.sensors
+                        if sensor.key == sensor_key
+                    ),
+                    None,
+                )
+                if sensor_name and sensor_name.lower() == "humidity":
+                    sensor_name = "Relative Humidity"
+            alarm_type = trigger.get("type")
+            name_parts = [
+                sensor_name or (device.name if device else str(alarm_id)),
+                alarm_type.title()
+                if isinstance(alarm_type, str) and alarm_type in {"high", "low"}
+                else "",
+                "Alarm",
+            ]
+            name = " ".join(part for part in name_parts if part)
+            threshold = trigger.get("threshold")
+            if (
+                isinstance(threshold, (str, int, float))
+                and not isinstance(threshold, bool)
+                and threshold != ""
+            ):
+                name = f"{name} (limit {threshold})"
+            alarms.append(
+                Alarm(
+                    id=slugify(
+                        "_".join(
+                            part
+                            for part in (path, alarm_type, alarm_id)
+                            if isinstance(part, str) and part
+                        )
+                    ),
+                    name=name,
+                    state=state,
+                    device_id=device.id if device else None,
+                    attributes={
+                        key: trigger[key]
+                        for key in (
+                            "severity",
+                            "type",
+                            "path",
+                            "threshold",
+                            "latching",
+                            "tripDelay",
+                            "clearDelay",
+                        )
+                        if key in trigger
+                    },
+                )
+            )
+        try:
+            return unique_alarm_ids(alarms)
+        except ValueError as exception:
+            _raise_error(
+                IntegrationBlueprintApiClientError,
+                "The device returned duplicate alarm identities",
+                exception,
+            )
 
     async def async_set_relay_state(
         self, device_id: str, relay_index: str, state: str

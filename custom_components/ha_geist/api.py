@@ -8,9 +8,10 @@ from typing import Any
 
 import aiohttp
 import async_timeout
+from homeassistant.util import slugify
 
 from .const import LOGGER
-from .types import Device, Field, ParsedData
+from .types import Alarm, Device, Field, ParsedData, unique_alarm_ids
 
 
 class IntegrationBlueprintApiClientError(Exception):
@@ -99,7 +100,11 @@ class IntegrationBlueprintApiClient:
                     server_sw_version_local = root.attrib.get(
                         "version"
                     ) or root.attrib.get("product-version")
-                    parsed_local: ParsedData = {"devices": [], "raw": text_to_parse}
+                    parsed_local: ParsedData = {
+                        "devices": [],
+                        "raw": text_to_parse,
+                        "alarms": None,
+                    }
                     devices_container = root.find("devices")
                     if devices_container is None:
                         return parsed_local
@@ -136,6 +141,98 @@ class IntegrationBlueprintApiClient:
                         devices_list.append(d)
 
                     parsed_local["devices"] = devices_list
+                    alarms_container = root.find("alarms")
+                    if alarms_container is not None:
+                        alarms: list[Alarm] = []
+                        devices_by_id = {device.id: device for device in devices_list}
+                        for alarm_elem in alarms_container.findall("alarm"):
+                            if alarm_elem.get("enabled") == "0":
+                                continue
+                            device_id = alarm_elem.get("device-id")
+                            field_key = alarm_elem.get("field")
+                            source_id = alarm_elem.get("alarm-num") or alarm_elem.get(
+                                "cid"
+                            )
+                            status = alarm_elem.get("status")
+                            if not device_id or not field_key or not status:
+                                msg = "XML alarm is missing device ID, field, or status"
+                                raise IntegrationBlueprintApiClientError(msg)
+                            device = devices_by_id.get(device_id)
+                            field = (
+                                device.fields.get(field_key)
+                                if device and field_key
+                                else None
+                            )
+                            field_name = (
+                                field.niceName
+                                if field and field.niceName
+                                else field_key
+                            )
+                            limit_type = alarm_elem.get("limtype") or alarm_elem.get(
+                                "limType"
+                            )
+                            name = " ".join(
+                                part
+                                for part in (field_name, limit_type, "Alarm")
+                                if part
+                            )
+                            thresholds = [
+                                f"{label} {value}"
+                                for key, label in (
+                                    ("limit", "limit"),
+                                    ("em-warn", "warning"),
+                                    ("em-trip", "alarm"),
+                                )
+                                if (value := alarm_elem.get(key)) is not None
+                            ]
+                            if thresholds:
+                                name = f"{name} ({', '.join(thresholds)})"
+                            alarm_id = slugify(
+                                "_".join(
+                                    part
+                                    for part in (
+                                        device_id,
+                                        field_key,
+                                        limit_type,
+                                        source_id,
+                                    )
+                                    if part
+                                )
+                            )
+                            alarms.append(
+                                Alarm(
+                                    id=alarm_id,
+                                    name=name,
+                                    state=(
+                                        "clear"
+                                        if status.lower() == "untripped"
+                                        else status.lower()
+                                    ),
+                                    device_id=device_id if device else None,
+                                    attributes={
+                                        "reported_status": status,
+                                        **(
+                                            {"limtype": limit_type}
+                                            if limit_type
+                                            else {}
+                                        ),
+                                        **{
+                                            key: alarm_elem.attrib[key]
+                                            for key in (
+                                                "field",
+                                                "limit",
+                                                "delay",
+                                                "repeat",
+                                                "enabled",
+                                                "em-trip",
+                                                "em-warn",
+                                            )
+                                            if key in alarm_elem.attrib
+                                        },
+                                    },
+                                )
+                            )
+                        parsed_local["alarms"] = unique_alarm_ids(alarms)
                     return parsed_local
 
                 _verify_response_or_raise(response)

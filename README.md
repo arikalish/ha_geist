@@ -22,6 +22,13 @@ JSON API creates sensors from device measurements and analog inputs, and a
 switch for each relay. Relay switches send explicit on/off commands and refresh
 the device state afterward. Data is polled every 30 seconds.
 
+Configured alarms are exposed as read-only sensors. Their names include reported
+thresholds, and their entity IDs include the target, comparison type, and alarm
+slot (or channel on older XML devices).
+XML alarm sensors are added and removed as the device configuration changes.
+Changing an alarm identity creates a new entity ID; update automations that
+refer to the old one. Digital inputs from the JSON API are binary sensors.
+
 SNMP discovery is not currently used. Discovery does not scan network ranges.
 
 ## Development

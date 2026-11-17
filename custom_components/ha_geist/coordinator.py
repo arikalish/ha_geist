@@ -12,7 +12,8 @@ from .api import (
     IntegrationBlueprintApiClientAuthenticationError,
     IntegrationBlueprintApiClientError,
 )
-from .const import DOMAIN
+from .api_json import GeistJsonApiClient
+from .const import DOMAIN, LOGGER
 from .types import JsonParsedData
 
 if TYPE_CHECKING:
@@ -59,6 +60,12 @@ class BlueprintDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(exception) from exception
 
         if isinstance(data, JsonParsedData):
+            client = self.config_entry.runtime_data.client
+            if isinstance(client, GeistJsonApiClient):
+                try:
+                    data.alarms = await client.async_get_alarms(data.devices)
+                except IntegrationBlueprintApiClientError as exception:
+                    LOGGER.warning("Unable to retrieve device alarms: %s", exception)
             registry = dr.async_get(self.hass)
             for device in data.devices:
                 if not device.serial_number:

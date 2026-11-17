@@ -13,6 +13,31 @@ from typing import Any, Optional, TypedDict
 class ParsedData(TypedDict):
     devices: list[Device]
     raw: str
+    alarms: list[Alarm] | None
+
+
+@dataclass
+class Alarm:
+    """A device-reported alarm and its current state."""
+
+    id: str
+    name: str
+    state: str
+    device_id: str | None
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+
+def unique_alarm_ids(alarms: list[Alarm]) -> list[Alarm]:
+    """Reject duplicate normalized identities."""
+    used: set[str] = set()
+    result: list[Alarm] = []
+    for alarm in alarms:
+        if alarm.id in used:
+            msg = f"Duplicate alarm identity {alarm.id}"
+            raise ValueError(msg)
+        used.add(alarm.id)
+        result.append(alarm)
+    return result
 
 
 @dataclass
@@ -32,6 +57,11 @@ class JsonSensor:
     unit: Optional[str]
     measurement_type: Optional[str] = None
     measurement_name: Optional[str] = None
+
+
+def is_digital_measurement(sensor: JsonSensor) -> bool:
+    """Return whether a JSON measurement is a CCAT digital input."""
+    return (sensor.measurement_type or "").lower() == "ccatdigital"
 
 
 @dataclass
@@ -64,6 +94,7 @@ class JsonParsedData:
 
     devices: list[JsonDevice]
     raw: dict[str, Any]
+    alarms: list[Alarm] | None = None
 
 
 @dataclass

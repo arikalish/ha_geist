@@ -1,9 +1,4 @@
-"""Sensor platform for ha_geist.
-
-Creates one sensor per `<field>` element under each `<device>` in the
-parsed XML. Each Home Assistant device is created from the `<device>`
-element using its `name` attribute.
-"""
+"""Expose measurements and read-only alarm states from XML and JSON devices."""
 
 from __future__ import annotations
 
@@ -21,18 +16,30 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
+from .coordinator import BlueprintDataUpdateCoordinator
 from .entity import IntegrationBlueprintEntity
-from .types import Device, Field, JsonDevice, JsonParsedData, JsonSensor
+from .types import (
+    Alarm,
+    Device,
+    Field,
+    JsonDevice,
+    JsonParsedData,
+    JsonSensor,
+    is_digital_measurement,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-    from .coordinator import BlueprintDataUpdateCoordinator
     from .data import IntegrationBlueprintConfigEntry
 
 
@@ -69,7 +76,7 @@ _FIELD_DEVICE_CLASSES = {
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,  # noqa: ARG001 Unused function argument: `hass`
+    hass: HomeAssistant,
     entry: IntegrationBlueprintConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
@@ -85,8 +92,10 @@ async def async_setup_entry(
                 JsonSensorEntity(coordinator, device, sensor)
                 for device in data.devices
                 for sensor in device.sensors
+                if not is_digital_measurement(sensor)
             ]
         )
+        _setup_alarm_sensors(hass, entry, async_add_entities)
         return
 
     devices: list[Device] = data.get("devices", []) if data else []
@@ -120,6 +129,121 @@ async def async_setup_entry(
 
     if entities:
         async_add_entities(entities)
+    _setup_alarm_sensors(hass, entry, async_add_entities)
+
+
+def _setup_alarm_sensors(
+    hass: HomeAssistant,
+    entry: IntegrationBlueprintConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Add alarm sensors initially and when new triggers appear."""
+    coordinator = entry.runtime_data.coordinator
+    known_ids: set[str] = set()
+    json_legacy_removed = False
+
+    @callback
+    def add_new_alarms() -> None:
+        nonlocal json_legacy_removed
+        alarms = _current_alarms(coordinator.data)
+        if alarms is None:
+            return
+        current_ids = {alarm.id for alarm in alarms}
+        is_xml = isinstance(coordinator.data, dict)
+        if is_xml or not json_legacy_removed:
+            registry = er.async_get(hass)
+            prefix = f"{entry.entry_id}_alarm_"
+            for existing in er.async_entries_for_config_entry(registry, entry.entry_id):
+                old_id = existing.unique_id.removeprefix(prefix)
+                if (
+                    existing.domain == "sensor"
+                    and existing.platform == DOMAIN
+                    and existing.unique_id.startswith(prefix)
+                    and (
+                        (is_xml and old_id not in current_ids)
+                        or (not is_xml and old_id.isdecimal())
+                    )
+                ):
+                    registry.async_remove(existing.entity_id)
+            if not is_xml:
+                json_legacy_removed = True
+        if is_xml:
+            known_ids.intersection_update(current_ids)
+        new_alarms = [alarm for alarm in alarms if alarm.id not in known_ids]
+        known_ids.update(alarm.id for alarm in new_alarms)
+        if new_alarms:
+            async_add_entities(
+                [
+                    AlarmSensor(coordinator, entry.entry_id, alarm)
+                    for alarm in new_alarms
+                ]
+            )
+
+    add_new_alarms()
+    entry.async_on_unload(coordinator.async_add_listener(add_new_alarms))
+
+
+def _current_alarms(data: object) -> list[Alarm] | None:
+    """Return current alarm data, distinguishing missing data from an empty list."""
+    if isinstance(data, JsonParsedData):
+        return data.alarms
+    if isinstance(data, dict):
+        return data.get("alarms")
+    return None
+
+
+class AlarmSensor(CoordinatorEntity[BlueprintDataUpdateCoordinator], SensorEntity):
+    """Expose the device's reported state for a configured alarm."""
+
+    _attr_icon = "mdi:bell-alert"
+
+    def __init__(
+        self, coordinator: BlueprintDataUpdateCoordinator, entry_id: str, alarm: Alarm
+    ) -> None:
+        """Initialize an alarm sensor."""
+        super().__init__(coordinator)
+        self._alarm_id = alarm.id
+        self._attr_unique_id = f"{entry_id}_alarm_{alarm.id}"
+        self._attr_name = alarm.name
+        self.entity_id = f"sensor.{slugify(alarm.id)}_alarm"
+        if alarm.device_id:
+            self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, alarm.device_id)})
+
+    def _alarm(self) -> Alarm | None:
+        """Find the latest data for this alarm."""
+        alarms = _current_alarms(self.coordinator.data)
+        if alarms is not None:
+            return next((alarm for alarm in alarms if alarm.id == self._alarm_id), None)
+        return None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Refresh the name when an alarm slot is reconfigured."""
+        alarm = self._alarm()
+        if alarm and alarm.name != self._attr_name:
+            self._attr_name = alarm.name
+            if self.registry_entry:
+                self.registry_entry = er.async_get(self.hass).async_update_entity(
+                    self.entity_id, original_name=alarm.name
+                )
+        super()._handle_coordinator_update()
+
+    @property
+    def available(self) -> bool:
+        """Return whether the alarm is present in the latest successful update."""
+        return super().available and self._alarm() is not None
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the exact state reported by the device."""
+        alarm = self._alarm()
+        return alarm.state if alarm else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object] | None:
+        """Return the alarm's reported configuration."""
+        alarm = self._alarm()
+        return alarm.attributes if alarm else None
 
 
 class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
