@@ -11,14 +11,14 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from slugify import slugify
 
-from .api import (
-    IntegrationBlueprintApiClient,
+from .api_json import GeistJsonApiClient
+from .api_xml import IntegrationBlueprintApiClient
+from .const import API_TYPE_JSON, API_TYPE_XML, CONF_API_TYPE, DOMAIN, LOGGER
+from .exceptions import (
     IntegrationBlueprintApiClientAuthenticationError,
     IntegrationBlueprintApiClientCommunicationError,
     IntegrationBlueprintApiClientError,
 )
-from .api_json import GeistJsonApiClient
-from .const import API_TYPE_JSON, API_TYPE_XML, CONF_API_TYPE, DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from homeassistant.helpers.service_info.dhcp import DhcpServiceInfo

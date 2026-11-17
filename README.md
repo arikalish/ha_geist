@@ -55,7 +55,9 @@ testing.
 
 ## Repository layout
 
-The integration code lives in `custom_components/ha_geist`; development and
+The XML and JSON API clients are in `api_xml.py` and `api_json.py`; shared API
+exceptions are in `exceptions.py`. The integration code lives in
+`custom_components/ha_geist`; development and
 Home Assistant configuration files are included for local testing.
 
 ## What?

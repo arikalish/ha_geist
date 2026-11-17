@@ -12,23 +12,12 @@ import async_timeout
 from homeassistant.util import slugify
 
 from .const import LOGGER
+from .exceptions import (
+    IntegrationBlueprintApiClientAuthenticationError,
+    IntegrationBlueprintApiClientCommunicationError,
+    IntegrationBlueprintApiClientError,
+)
 from .types import Alarm, Device, Field, ParsedData, unique_alarm_ids
-
-
-class IntegrationBlueprintApiClientError(Exception):
-    """Exception to indicate a general API error."""
-
-
-class IntegrationBlueprintApiClientCommunicationError(
-    IntegrationBlueprintApiClientError,
-):
-    """Exception to indicate a communication error."""
-
-
-class IntegrationBlueprintApiClientAuthenticationError(
-    IntegrationBlueprintApiClientError,
-):
-    """Exception to indicate an authentication error."""
 
 
 def _verify_response_or_raise(response: aiohttp.ClientResponse) -> None:

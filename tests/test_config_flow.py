@@ -10,11 +10,11 @@ import voluptuous as vol
 from homeassistant.const import CONF_NAME, CONF_PASSWORD, CONF_URL, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.ha_geist.api import (
-    IntegrationBlueprintApiClientAuthenticationError,
-)
 from custom_components.ha_geist.config_flow import BlueprintFlowHandler
 from custom_components.ha_geist.const import API_TYPE_JSON, API_TYPE_XML, CONF_API_TYPE
+from custom_components.ha_geist.exceptions import (
+    IntegrationBlueprintApiClientAuthenticationError,
+)
 
 
 class TestConfigFlow(unittest.IsolatedAsyncioTestCase):

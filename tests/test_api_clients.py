@@ -27,12 +27,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from custom_components.ha_geist import async_migrate_entry
-from custom_components.ha_geist.api import (
-    IntegrationBlueprintApiClient,
-    IntegrationBlueprintApiClientAuthenticationError,
-    IntegrationBlueprintApiClientError,
-)
 from custom_components.ha_geist.api_json import GeistJsonApiClient, _parse_devices
+from custom_components.ha_geist.api_xml import IntegrationBlueprintApiClient
 from custom_components.ha_geist.binary_sensor import (
     GeistDigitalInput,
 )
@@ -43,6 +39,10 @@ from custom_components.ha_geist.button import GeistAlarmAcknowledgeButton
 from custom_components.ha_geist.button import async_setup_entry as async_setup_buttons
 from custom_components.ha_geist.const import API_TYPE_JSON, CONF_API_TYPE
 from custom_components.ha_geist.coordinator import BlueprintDataUpdateCoordinator
+from custom_components.ha_geist.exceptions import (
+    IntegrationBlueprintApiClientAuthenticationError,
+    IntegrationBlueprintApiClientError,
+)
 from custom_components.ha_geist.sensor import (
     AlarmSensor,
     FieldSensor,

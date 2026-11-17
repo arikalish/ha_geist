@@ -8,12 +8,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import (
+from .api_json import GeistJsonApiClient
+from .const import DOMAIN, LOGGER
+from .exceptions import (
     IntegrationBlueprintApiClientAuthenticationError,
     IntegrationBlueprintApiClientError,
 )
-from .api_json import GeistJsonApiClient
-from .const import DOMAIN, LOGGER
 from .types import JsonParsedData
 
 if TYPE_CHECKING:
@@ -37,10 +37,7 @@ def _update_xml_firmware(
         if device.index == "0":
             if device.sw_version and entry.sw_version != device.sw_version:
                 registry.async_update_device(entry.id, sw_version=device.sw_version)
-        elif (
-            entry.sw_version is not None
-            and entry.config_entries == {config_entry_id}
-        ):
+        elif entry.sw_version is not None and entry.config_entries == {config_entry_id}:
             registry.async_update_device(entry.id, sw_version=None)
 
 

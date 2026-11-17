@@ -9,8 +9,8 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.loader import Integration
 
-    from .api import IntegrationBlueprintApiClient
     from .api_json import GeistJsonApiClient
+    from .api_xml import IntegrationBlueprintApiClient
     from .coordinator import BlueprintDataUpdateCoordinator
 
 

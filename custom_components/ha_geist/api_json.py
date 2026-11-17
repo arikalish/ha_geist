@@ -12,12 +12,12 @@ import aiohttp
 import async_timeout
 from homeassistant.util import slugify
 
-from .api import (
+from .const import LOGGER
+from .exceptions import (
     IntegrationBlueprintApiClientAuthenticationError,
     IntegrationBlueprintApiClientCommunicationError,
     IntegrationBlueprintApiClientError,
 )
-from .const import LOGGER
 from .types import (
     Alarm,
     JsonDevice,

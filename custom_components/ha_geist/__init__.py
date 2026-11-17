@@ -15,8 +15,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_loaded_integration
 
-from .api import IntegrationBlueprintApiClient
 from .api_json import GeistJsonApiClient
+from .api_xml import IntegrationBlueprintApiClient
 from .const import API_TYPE_JSON, API_TYPE_XML, CONF_API_TYPE, DOMAIN, LOGGER
 from .coordinator import BlueprintDataUpdateCoordinator
 from .data import IntegrationBlueprintData
