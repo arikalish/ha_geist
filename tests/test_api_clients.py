@@ -1810,6 +1810,36 @@ class TestApiClients(unittest.TestCase):
         self.assertEqual(entity.name, "Relative Humidity")
         self.assertEqual(entity.native_unit_of_measurement, "%")
 
+    def test_xml_power_fields_are_energy_dashboard_compatible(self) -> None:
+        """Power fields expose the power device class and measurement state class."""
+        coordinator = SimpleNamespace(
+            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
+            data={"devices": []},
+        )
+        sensors = {
+            key: FieldSensor(
+                coordinator=coordinator,  # type: ignore[arg-type]
+                device_id="device-1",
+                device_name="Climate",
+                manufacturer=None,
+                model=None,
+                serial_number=None,
+                sw_version=None,
+                field_key=key,
+                nice_name=key,
+            )
+            for key in ("RealPower-A", "Amps-A", "Volts", "CT1", "TempC")
+        }
+        self.assertEqual(sensors["RealPower-A"].device_class, "power")
+        self.assertEqual(sensors["RealPower-A"].native_unit_of_measurement, "W")
+        self.assertEqual(sensors["Amps-A"].device_class, "current")
+        self.assertEqual(sensors["Volts"].device_class, "voltage")
+        self.assertEqual(sensors["CT1"].device_class, "current")
+        self.assertEqual(sensors["TempC"].device_class, "temperature")
+        self.assertTrue(
+            all(sensor.state_class == "measurement" for sensor in sensors.values())
+        )
+
     def test_json_unknown_unit_does_not_assign_incompatible_device_class(self) -> None:
         """An unrecognized unit cannot result in an invalid HA sensor class."""
         result = _parse_devices(

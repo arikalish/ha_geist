@@ -6,7 +6,11 @@ import math
 import re
 from typing import TYPE_CHECKING
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.components.sensor.const import DEVICE_CLASS_UNITS
 from homeassistant.const import (
     PERCENTAGE,
@@ -345,6 +349,14 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         # Unit of measurement
         self._attr_native_unit_of_measurement = self.unit_for_field_key(field_key)
         self._attr_icon = self.icon_for_field_key(field_key)
+        device_class = self.device_class_for_field_key(field_key)
+        if (
+            device_class
+            and self._attr_native_unit_of_measurement
+            in DEVICE_CLASS_UNITS[device_class]
+        ):
+            self._attr_device_class = device_class
+            self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> float | str | None:
@@ -366,6 +378,25 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
                         else value
                     )
                 return numeric_value if math.isfinite(numeric_value) else None
+        return None
+
+    @staticmethod
+    def device_class_for_field_key(key: str) -> SensorDeviceClass | None:  # noqa: PLR0911
+        """Return the device class for a given field key."""
+        if key == "TOTAL" or key.startswith(("CT", "Amps")):
+            return SensorDeviceClass.CURRENT
+        if key in {"TempC", "TempF", "DewPtC", "DewPtF"}:
+            return SensorDeviceClass.TEMPERATURE
+        if key == "Humidity":
+            return SensorDeviceClass.HUMIDITY
+        if key.startswith("Volt"):
+            return SensorDeviceClass.VOLTAGE
+        if key.startswith("Pwr-Factor"):
+            return SensorDeviceClass.POWER_FACTOR
+        if key.startswith("RealPower"):
+            return SensorDeviceClass.POWER
+        if key.startswith("ApPower"):
+            return SensorDeviceClass.APPARENT_POWER
         return None
 
     @staticmethod
@@ -474,6 +505,7 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
                 in DEVICE_CLASS_UNITS[device_class]
             ):
                 self._attr_device_class = device_class
+                self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_device_info = json_device_info(device)
 
     @property
