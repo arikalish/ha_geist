@@ -16,5 +16,5 @@
   "documentation": "https://github.com/arikalish/ha_geist",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/arikalish/ha_geist/issues",
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
