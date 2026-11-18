@@ -55,38 +55,42 @@ testing.
 
 ## Repository layout
 
-The XML and JSON API clients are in `api_xml.py` and `api_json.py`; shared API
-exceptions are in `exceptions.py`. The integration code lives in
-`custom_components/ha_geist`; development and
-Home Assistant configuration files are included for local testing.
+Path | Purpose
+-- | --
+`custom_components/ha_geist/` | The integration itself (see below).
+`tests/` | Unit tests for the API clients, entities and config flow.
+`examples/` | Sample `data.xml` files from legacy devices, used by the tests.
+`config/` | Home Assistant configuration used by the development container.
+`scripts/` | `setup`, `develop` and `lint` helper scripts.
+`.devcontainer.json` | Visual Studio Code development container.
+`.github/` | Issue templates and workflows.
+`requirements.txt` | Development, lint and test dependencies.
+`hacs.json` | HACS metadata.
 
-## What?
+## Integration structure
 
-This repository contains multiple files, here is a overview:
+Module | Purpose
+-- | --
+`manifest.json` | Integration metadata, including the DHCP MAC prefixes used for discovery.
+`config_flow.py` | Setup, reconfiguration and DHCP discovery. Tries the XML API first, then the JSON API, and stores the detected type in the config entry.
+`__init__.py` | Entry setup: creates the client for the stored API type, the coordinator, and the entity platforms.
+`api_xml.py` | Client and parser for the legacy HTTP `/data.xml` API.
+`api_json.py` | Client and parser for the token-based JSON API, including alarms, relays and alarm acknowledgement.
+`exceptions.py` | Error types shared by both clients.
+`types.py` | Dataclasses for parsed XML and JSON data.
+`coordinator.py` | Polls the selected client every 30 seconds and keeps device registry details such as firmware current.
+`data.py` | Runtime data stored on the config entry (client, coordinator, integration).
+`entity.py` | Base entity class and entity ID helper.
+`sensor.py` | Measurement and alarm sensors for both APIs.
+`binary_sensor.py` | Digital inputs (JSON).
+`switch.py` | Relay control (JSON).
+`button.py` | Alarm acknowledgement buttons (JSON).
+`const.py` | Domain, logger and API type constants.
+`translations/` | UI strings.
 
-File | Purpose | Documentation
--- | -- | --
-`.devcontainer.json` | Used for development/testing with Visual Studio Code. | [Documentation](https://code.visualstudio.com/docs/remote/containers)
-`.github/ISSUE_TEMPLATE/*.yml` | Templates for the issue tracker | [Documentation](https://help.github.com/en/github/building-a-strong-community/configuring-issue-templates-for-your-repository)
-`custom_components/ha_geist/*` | Integration files, this is where everything happens. | [Documentation](https://developers.home-assistant.io/docs/creating_component_index)
-`CONTRIBUTING.md` | Guidelines on how to contribute. | [Documentation](https://help.github.com/en/github/building-a-strong-community/setting-guidelines-for-repository-contributors)
-`LICENSE` | The license file for the project. | [Documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/licensing-a-repository)
-`README.md` | The file you are reading now, should contain info about the integration, installation and configuration instructions. | [Documentation](https://help.github.com/en/github/writing-on-github/basic-writing-and-formatting-syntax)
-`requirements.txt` | Python packages used for development/lint/testing this integration. | [Documentation](https://pip.pypa.io/en/stable/user_guide/#requirements-files)
+### Data flow
 
-## How?
-
-1. Create a new repository in GitHub, using this repository as a template by clicking the "Use this template" button in the GitHub UI.
-1. Open your new repository in Visual Studio Code devcontainer (Preferably with the "`Dev Containers: Clone Repository in Named Container Volume...`" option).
-1. Rename all instances of the `ha_geist` to `custom_components/<your_integration_domain>` (e.g. `custom_components/awesome_integration`).
-1. Rename all instances of the `HA Geist` to `<Your Integration Name>` (e.g. `Awesome Integration`).
-1. Run the `scripts/develop` to start HA and test out your new integration.
-
-## Next steps
-
-These are some next steps you may want to look into:
-- Add tests to your integration, [`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component) can help you get started.
-- Add brand images (logo/icon) to https://github.com/home-assistant/brands.
-- Create your first release.
-- Share your integration on the [Home Assistant Forum](https://community.home-assistant.io/).
-- Submit your integration to [HACS](https://hacs.xyz/docs/publish/start).
+1. The config flow detects whether a device speaks XML or JSON and saves the choice.
+2. On setup, the matching client is created and the coordinator performs a first refresh.
+3. The coordinator polls the client; every entity reads its value from the coordinator's data.
+4. The platforms create entities from the first refresh. JSON alarm sensors and buttons are added or removed as alarms change on the device.
