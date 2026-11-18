@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 class BlueprintFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Blueprint."""
 
-    VERSION = 2
+    VERSION = 1
 
     async def async_step_dhcp(
         self, discovery_info: DhcpServiceInfo

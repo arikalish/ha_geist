@@ -23,10 +23,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import EntityPlatform
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
-from custom_components.ha_geist import async_migrate_entry
 from custom_components.ha_geist.api_json import GeistJsonApiClient, _parse_devices
 from custom_components.ha_geist.api_xml import IntegrationBlueprintApiClient
 from custom_components.ha_geist.binary_sensor import (
@@ -198,149 +196,6 @@ class TestApiClients(unittest.TestCase):
                 "switch.device_2_relay_0",
             ],
         )
-
-    def test_json_entity_id_migration_preserves_registry_settings(self) -> None:
-        """Rename existing entries once, retaining unique IDs and custom settings."""
-
-        async def run() -> None:
-            with tempfile.TemporaryDirectory() as config_dir:
-                hass = HomeAssistant(config_dir)
-                await er.async_load(hass)
-                entry = SimpleNamespace(
-                    entry_id="entry",
-                    version=1,
-                    domain="ha_geist",
-                    data={CONF_API_TYPE: API_TYPE_JSON},
-                    pref_disable_new_entities=False,
-                    pref_disable_polling=False,
-                )
-                hass.config_entries = MagicMock()
-                hass.config_entries.async_get_entry.return_value = entry
-                registry = er.async_get(hass)
-                first = registry.async_get_or_create(
-                    "sensor",
-                    "ha_geist",
-                    "device-1_analog_0",
-                    config_entry=entry,
-                    suggested_object_id="analog_1",
-                )
-                registry.async_update_entity(first.entity_id, name="Custom analog")
-                second = registry.async_get_or_create(
-                    "sensor",
-                    "ha_geist",
-                    "device-2_analog_0",
-                    config_entry=entry,
-                    suggested_object_id="analog_1",
-                )
-                digital = registry.async_get_or_create(
-                    "binary_sensor",
-                    "ha_geist",
-                    "device-1_entity_0_1",
-                    config_entry=entry,
-                    disabled_by=er.RegistryEntryDisabler.USER,
-                )
-                relay = registry.async_get_or_create(
-                    "switch",
-                    "ha_geist",
-                    "device-1_relay_0",
-                    config_entry=entry,
-                )
-                alarm = registry.async_get_or_create(
-                    "sensor",
-                    "ha_geist",
-                    "entry_alarm_device_1_analog_0_high_0",
-                    config_entry=entry,
-                )
-                conflict = registry.async_get_or_create(
-                    "sensor",
-                    "other",
-                    "other-unique",
-                    suggested_object_id="device_1_analog_0",
-                )
-                self.assertTrue(await async_migrate_entry(hass, entry))  # type: ignore[arg-type]
-                migrated_id = registry.async_get_entity_id(
-                    "sensor", "ha_geist", "device-1_analog_0"
-                )
-                self.assertEqual(migrated_id, "sensor.device_1_analog_0_2")
-                migrated = registry.async_get(migrated_id)
-                assert migrated is not None
-                self.assertEqual(migrated.name, "Custom analog")
-                self.assertEqual(
-                    registry.async_get_entity_id(
-                        "sensor", "ha_geist", second.unique_id
-                    ),
-                    "sensor.device_2_analog_0",
-                )
-                digital_id = registry.async_get_entity_id(
-                    "binary_sensor", "ha_geist", digital.unique_id
-                )
-                self.assertEqual(digital_id, "binary_sensor.device_1_entity_0_1")
-                self.assertEqual(
-                    registry.async_get(digital_id).disabled_by,
-                    er.RegistryEntryDisabler.USER,
-                )
-                self.assertEqual(
-                    registry.async_get_entity_id("switch", "ha_geist", relay.unique_id),
-                    "switch.device_1_relay_0",
-                )
-                self.assertIsNotNone(registry.async_get(alarm.entity_id))
-                self.assertIsNotNone(registry.async_get(conflict.entity_id))
-                hass.config_entries.async_update_entry.assert_called_with(
-                    entry, version=2
-                )
-                self.assertTrue(await async_migrate_entry(hass, entry))  # type: ignore[arg-type]
-                self.assertEqual(
-                    registry.async_get_entity_id(
-                        "sensor", "ha_geist", "device-1_analog_0"
-                    ),
-                    migrated_id,
-                )
-                await hass.async_block_till_done()
-                data = _parse_devices(
-                    {"device-2": {"analog": {"0": {"label": "Analog 1", "value": "3"}}}}
-                )
-                coordinator = SimpleNamespace(
-                    data=data,
-                    config_entry=entry,
-                    last_update_success=True,
-                    async_add_listener=MagicMock(return_value=lambda: None),
-                )
-                sensor = JsonSensorEntity(
-                    coordinator,
-                    data.devices[0],
-                    data.devices[0].sensors[0],  # type: ignore[arg-type]
-                )
-                sensor._attr_device_info = None  # noqa: SLF001
-                platform = EntityPlatform(
-                    hass=hass,
-                    logger=logging.getLogger(__name__),
-                    domain="sensor",
-                    platform_name="ha_geist",
-                    platform=None,
-                    scan_interval=timedelta(seconds=30),
-                    entity_namespace=None,
-                )
-                platform.config_entry = entry
-                await platform.async_add_entities([sensor])
-                state = hass.states.get("sensor.device_2_analog_0")
-                self.assertIsNotNone(state)
-                assert state is not None
-                self.assertEqual(state.state, "3.0")
-                await platform.async_reset()
-                await hass.async_stop(force=True)
-
-        asyncio.run(run())
-
-    def test_xml_entry_migration_keeps_entity_ids(self) -> None:
-        """The version upgrade does not rename XML entities."""
-        hass = SimpleNamespace(
-            config_entries=SimpleNamespace(async_update_entry=MagicMock())
-        )
-        entry = SimpleNamespace(version=1, data={}, entry_id="xml")
-        with patch("custom_components.ha_geist.er.async_get") as get_registry:
-            self.assertTrue(asyncio.run(async_migrate_entry(hass, entry)))  # type: ignore[arg-type]
-            get_registry.assert_not_called()
-        hass.config_entries.async_update_entry.assert_called_once_with(entry, version=2)
 
     def test_xml_api_parses_example_data(self) -> None:
         """Legacy data.xml parsing still exposes device fields."""
@@ -1302,33 +1157,21 @@ class TestApiClients(unittest.TestCase):
 
         async def run() -> None:
             binary_entities = MagicMock()
-            with patch(
-                "custom_components.ha_geist.binary_sensor.er.async_get",
-                return_value=SimpleNamespace(
-                    async_get_entity_id=MagicMock(return_value=None)
-                ),
-            ):
-                await async_setup_binary_sensors(None, entry, binary_entities)  # type: ignore[arg-type]
+            await async_setup_binary_sensors(None, entry, binary_entities)  # type: ignore[arg-type]
             binary = binary_entities.call_args.args[0]
             self.assertEqual(len(binary), 1)
             self.assertIsInstance(binary[0], GeistDigitalInput)
 
             add_entities = MagicMock()
-            with patch(
-                "custom_components.ha_geist.sensor.er.async_get",
-                return_value=SimpleNamespace(
-                    async_get_entity_id=MagicMock(return_value=None)
-                ),
-            ):
-                await async_setup_sensors(object(), entry, add_entities)  # type: ignore[arg-type]
+            await async_setup_sensors(object(), entry, add_entities)  # type: ignore[arg-type]
             sensors = add_entities.call_args.args[0]
             self.assertEqual(len(sensors), 1)
             self.assertEqual(sensors[0].name, "Temperature")
 
         asyncio.run(run())
 
-    def test_json_temperature_units_and_registry_migration(self) -> None:
-        """Create both units, migrate old sensors, and use current source units."""
+    def test_json_temperature_units(self) -> None:
+        """Create both units and use current source units."""
 
         async def run() -> None:
             with tempfile.TemporaryDirectory() as config_dir:
@@ -1347,40 +1190,6 @@ class TestApiClients(unittest.TestCase):
                 hass.config_entries = MagicMock()
                 hass.config_entries.async_get_entry.return_value = entry
                 registry = er.async_get(hass)
-                old = registry.async_get_or_create(
-                    "sensor",
-                    "ha_geist",
-                    "device_entity_0_0",
-                    config_entry=entry,
-                    suggested_object_id="device_entity_0_0",
-                )
-                registry.async_update_entity(old.entity_id, name="Custom temperature")
-                registry.async_update_entity_options(
-                    old.entity_id,
-                    "sensor.private",
-                    {"suggested_unit_of_measurement": "°F"},
-                )
-                registry.async_get_or_create(
-                    "sensor",
-                    "ha_geist",
-                    "device_entity_0_0_tempf",
-                    config_entry=entry,
-                    suggested_object_id="device_entity_0_0_tempf",
-                )
-                humidity = registry.async_get_or_create(
-                    "sensor",
-                    "ha_geist",
-                    "device_entity_0_2",
-                    config_entry=entry,
-                    suggested_object_id="device_entity_0_2_humidity",
-                )
-                registry.async_get_or_create(
-                    "sensor",
-                    "ha_geist",
-                    "device_entity_0_1",
-                    config_entry=entry,
-                    suggested_object_id="custom_dewpoint",
-                )
                 data = _parse_devices(
                     {
                         "device": {
@@ -1435,7 +1244,7 @@ class TestApiClients(unittest.TestCase):
                 temp_c = platform.entities["sensor.device_tempc"]
                 temp_f = platform.entities["sensor.device_tempf"]
                 dew_c = platform.entities["sensor.device_dewptc"]
-                dew_f = platform.entities["sensor.custom_dewpoint"]
+                dew_f = platform.entities["sensor.device_dewptf"]
                 self.assertEqual(
                     [temp_c.name, temp_f.name], ["Temperature (C)", "Temperature (F)"]
                 )
@@ -1452,14 +1261,11 @@ class TestApiClients(unittest.TestCase):
                     assert state is not None
                     self.assertAlmostEqual(float(state.state), expected)
                     self.assertEqual(state.attributes["unit_of_measurement"], unit)
-                migrated = registry.async_get(temp_c.entity_id)
-                assert migrated is not None
-                self.assertEqual(migrated.unique_id, "device_entity_0_0_tempc")
-                self.assertEqual(migrated.name, "Custom temperature")
+                self.assertEqual(temp_c.unique_id, "device_entity_0_0_tempc")
                 self.assertEqual(dew_f.unique_id, "device_entity_0_1_dewptf")
                 self.assertEqual(
                     registry.async_get_entity_id(
-                        "sensor", "ha_geist", humidity.unique_id
+                        "sensor", "ha_geist", "device_entity_0_2"
                     ),
                     "sensor.device_humidity",
                 )
@@ -1482,77 +1288,6 @@ class TestApiClients(unittest.TestCase):
                 await hass.async_stop(force=True)
 
         asyncio.run(run())
-
-    def test_digital_migration_removes_only_matching_legacy_entry(self) -> None:
-        """Wait for a state and never remove another config entry's sensor."""
-        data = _parse_devices(
-            {
-                "device": {
-                    "entity": {
-                        "0": {
-                            "measurement": {"0": {"type": "ccatDigital", "value": "1"}}
-                        }
-                    }
-                }
-            }
-        )
-        coordinator = SimpleNamespace(
-            data=data,
-            config_entry=SimpleNamespace(entry_id="entry", domain="ha_geist"),
-        )
-        registry = SimpleNamespace(
-            async_get_entity_id=MagicMock(return_value="sensor.legacy"),
-            async_get=MagicMock(),
-            async_remove=MagicMock(),
-        )
-
-        async def run(config_entry_id: str, binary_entry_id: str = "entry") -> None:
-            entity = GeistDigitalInput(
-                coordinator,
-                data.devices[0],
-                data.devices[0].sensors[0],  # type: ignore[arg-type]
-            )
-            entity.hass = object()  # type: ignore[assignment]
-            entity.entity_id = "binary_sensor.digital"
-            entity.registry_entry = SimpleNamespace(
-                config_entry_id=binary_entry_id, unique_id=entity.unique_id
-            )
-            entity.async_on_remove = MagicMock()
-            registry.async_get.return_value = SimpleNamespace(
-                entity_id="sensor.legacy", config_entry_id=config_entry_id
-            )
-            unsubscribe = MagicMock()
-            with (
-                patch.object(CoordinatorEntity, "async_added_to_hass", new=AsyncMock()),
-                patch(
-                    "custom_components.ha_geist.binary_sensor.async_track_state_change_event",
-                    return_value=unsubscribe,
-                ) as track,
-                patch(
-                    "custom_components.ha_geist.binary_sensor.er.async_get",
-                    return_value=registry,
-                ),
-            ):
-                await entity.async_added_to_hass()
-                registry.async_remove.assert_not_called()
-                listener = track.call_args.args[2]
-                listener(SimpleNamespace(data={"new_state": None}))
-                registry.async_remove.assert_not_called()
-                unsubscribe.assert_not_called()
-                listener(SimpleNamespace(data={"new_state": object()}))
-                unsubscribe.assert_called_once()
-                entity.async_on_remove.call_args.args[0]()
-                unsubscribe.assert_called_once()
-
-        asyncio.run(run("other-entry"))
-        registry.async_remove.assert_not_called()
-        asyncio.run(run("entry", "other-entry"))
-        registry.async_remove.assert_not_called()
-        asyncio.run(run("entry"))
-        registry.async_remove.assert_called_once_with("sensor.legacy")
-        registry.async_get_entity_id.assert_called_with(
-            "sensor", "ha_geist", "device_entity_0_0"
-        )
 
     def test_multiple_json_measurements_keep_ids_on_reload(self) -> None:
         """Duplicate measurement types retain their IDs and values after reordering."""
@@ -1665,183 +1400,6 @@ class TestApiClients(unittest.TestCase):
                 await add_measurements()
                 await check()
                 await platform.async_reset()
-                await hass.async_stop(force=True)
-
-        asyncio.run(run())
-
-    def test_digital_entity_id_migration(self) -> None:
-        """Rename existing default IDs without discarding registry settings."""
-
-        async def run() -> None:
-            with tempfile.TemporaryDirectory() as config_dir:
-                hass = HomeAssistant(config_dir)
-                await er.async_load(hass)
-                entry = SimpleNamespace(
-                    entry_id="entry",
-                    domain="ha_geist",
-                    data={CONF_API_TYPE: API_TYPE_JSON},
-                    pref_disable_new_entities=False,
-                )
-                hass.config_entries = MagicMock()
-                hass.config_entries.async_get_entry.return_value = entry
-                registry = er.async_get(hass)
-                old = registry.async_get_or_create(
-                    "binary_sensor",
-                    "ha_geist",
-                    "device_entity_0_0",
-                    config_entry=entry,
-                    suggested_object_id="device_entity_0_0",
-                )
-                registry.async_update_entity(old.entity_id, name="Custom input")
-                second = registry.async_get_or_create(
-                    "binary_sensor",
-                    "ha_geist",
-                    "device_entity_1_0",
-                    config_entry=entry,
-                    suggested_object_id="device_entity_1_0_digital",
-                )
-                registry.async_get_or_create(
-                    "binary_sensor",
-                    "other",
-                    "other_input",
-                    suggested_object_id="device_digital",
-                )
-                custom = registry.async_get_or_create(
-                    "binary_sensor",
-                    "ha_geist",
-                    "device_entity_2_0",
-                    config_entry=entry,
-                    suggested_object_id="custom_input",
-                )
-                data = _parse_devices(
-                    {
-                        "device": {
-                            "entity": {
-                                "0": {
-                                    "measurement": {
-                                        "0": {"type": "ccatDigital", "value": "1"}
-                                    }
-                                },
-                                "1": {
-                                    "measurement": {
-                                        "0": {"type": "ccatDigital", "value": "0"}
-                                    }
-                                },
-                                "2": {
-                                    "measurement": {
-                                        "0": {"type": "ccatDigital", "value": "1"}
-                                    }
-                                },
-                            }
-                        }
-                    }
-                )
-                coordinator = SimpleNamespace(data=data, config_entry=entry)
-                entry.runtime_data = SimpleNamespace(coordinator=coordinator)
-                add_entities = MagicMock()
-                await async_setup_binary_sensors(hass, entry, add_entities)  # type: ignore[arg-type]
-                entity_id = registry.async_get_entity_id(
-                    "binary_sensor", "ha_geist", old.unique_id
-                )
-                self.assertEqual(entity_id, "binary_sensor.device_digital_2")
-                migrated = registry.async_get(entity_id)
-                assert migrated is not None
-                self.assertEqual(migrated.name, "Custom input")
-                self.assertEqual(
-                    registry.async_get_entity_id(
-                        "binary_sensor", "ha_geist", second.unique_id
-                    ),
-                    "binary_sensor.device_digital_3",
-                )
-                self.assertEqual(
-                    registry.async_get_entity_id(
-                        "binary_sensor", "ha_geist", custom.unique_id
-                    ),
-                    "binary_sensor.custom_input",
-                )
-                entities = add_entities.call_args.args[0]
-                self.assertEqual(
-                    [entity.entity_id for entity in entities],
-                    [
-                        "binary_sensor.device_digital",
-                        "binary_sensor.device_digital",
-                        "binary_sensor.device_digital",
-                    ],
-                )
-                self.assertEqual(
-                    [entity.is_on for entity in entities], [True, False, True]
-                )
-                data.devices[0].sensors.reverse()
-                self.assertEqual(
-                    [entity.is_on for entity in entities], [True, False, True]
-                )
-                await hass.async_stop(force=True)
-
-        asyncio.run(run())
-
-    def test_digital_migration_runs_after_home_assistant_publishes_state(self) -> None:
-        """The real entity lifecycle publishes the replacement and removes the old ID."""
-
-        async def run() -> None:
-            with tempfile.TemporaryDirectory() as config_dir:
-                hass = HomeAssistant(config_dir)
-                await er.async_load(hass)
-                entry = SimpleNamespace(
-                    entry_id="entry",
-                    domain="ha_geist",
-                    pref_disable_polling=False,
-                    pref_disable_new_entities=False,
-                )
-                hass.config_entries = MagicMock()
-                hass.config_entries.async_get_entry.return_value = entry
-                registry = er.async_get(hass)
-                legacy = registry.async_get_or_create(
-                    "sensor", "ha_geist", "device_entity_0_0", config_entry=entry
-                )
-                data = _parse_devices(
-                    {
-                        "device": {
-                            "entity": {
-                                "0": {
-                                    "measurement": {
-                                        "0": {"type": "ccatDigital", "value": "1"}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                )
-                coordinator = SimpleNamespace(
-                    data=data,
-                    last_update_success=True,
-                    async_add_listener=MagicMock(return_value=lambda: None),
-                    config_entry=entry,
-                )
-                entity = GeistDigitalInput(
-                    coordinator,
-                    data.devices[0],
-                    data.devices[0].sensors[0],  # type: ignore[arg-type]
-                )
-                entity._attr_device_info = None  # noqa: SLF001
-                platform = EntityPlatform(
-                    hass=hass,
-                    logger=logging.getLogger(__name__),
-                    domain="binary_sensor",
-                    platform_name="ha_geist",
-                    platform=None,
-                    scan_interval=timedelta(seconds=30),
-                    entity_namespace=None,
-                )
-                platform.config_entry = entry
-                await platform.async_add_entities([entity])
-                await hass.async_block_till_done()
-                state = hass.states.get(entity.entity_id)
-                self.assertIsNotNone(state)
-                assert state is not None
-                self.assertEqual(state.state, "on")
-                self.assertIsNone(registry.async_get(legacy.entity_id))
-                await platform.async_reset()
-                await hass.async_block_till_done()
                 await hass.async_stop(force=True)
 
         asyncio.run(run())
