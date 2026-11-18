@@ -21,12 +21,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import slugify
 from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
 from .coordinator import BlueprintDataUpdateCoordinator
-from .entity import IntegrationBlueprintEntity, json_entity_id
+from .entity import IntegrationBlueprintEntity, json_device_info
 from .types import (
     Alarm,
     Device,
@@ -175,6 +174,7 @@ async def async_setup_entry(
                     model=model,
                     serial_number=dev.serial_number,
                     sw_version=dev.sw_version,
+                    via_device_id=dev.via_device_id,
                     field_key=key,
                     nice_name=nice,
                 )
@@ -253,8 +253,13 @@ def _setup_alarm_sensors(
     entry.async_on_unload(coordinator.async_add_listener(add_new_alarms))
 
 
-class AlarmSensor(CoordinatorEntity[BlueprintDataUpdateCoordinator], SensorEntity):
+class AlarmSensor(
+    CoordinatorEntity[BlueprintDataUpdateCoordinator],
+    SensorEntity,
+):
     """Expose the device's reported state for a configured alarm."""
+
+    _attr_has_entity_name = True
 
     _attr_icon = "mdi:bell-alert"
 
@@ -266,7 +271,6 @@ class AlarmSensor(CoordinatorEntity[BlueprintDataUpdateCoordinator], SensorEntit
         self._alarm_id = alarm.id
         self._attr_unique_id = f"{entry_id}_alarm_{alarm.id}"
         self._attr_name = alarm.name
-        self.entity_id = f"sensor.{slugify(alarm.id)}_alarm"
         if alarm.device_id:
             self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, alarm.device_id)})
 
@@ -318,6 +322,7 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
         sw_version: str | None,
         field_key: str,
         nice_name: str,
+        via_device_id: str | None = None,
     ) -> None:
         """Initialize the field sensor."""
         super().__init__(coordinator)
@@ -334,15 +339,12 @@ class FieldSensor(IntegrationBlueprintEntity, SensorEntity):
             model=model,
             serial_number=serial_number,
             sw_version=sw_version,
+            via_device=(DOMAIN, via_device_id) if via_device_id else None,
         )
 
         # Unit of measurement
         self._attr_native_unit_of_measurement = self.unit_for_field_key(field_key)
         self._attr_icon = self.icon_for_field_key(field_key)
-        # Set entity_id to a slugified version of the device id and field key
-        safe_key = re.sub(r"[^a-z0-9_]", "_", (field_key or "").lower())
-        safe_device = re.sub(r"[^a-z0-9_]", "_", (device_id or "").lower())
-        self.entity_id = f"sensor.{safe_device}_{safe_key}"
 
     @property
     def native_value(self) -> float | str | None:
@@ -447,7 +449,6 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
         self._attr_native_unit_of_measurement = (
             temperature_unit or _json_temperature_unit(sensor) or sensor.unit or None
         )
-        suffix = field_key
         if temperature_unit:
             if field_key not in {"TempC", "DewPtC"}:
                 msg = (
@@ -459,19 +460,6 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
             name = re.sub(r"\s*\([CF]\)$", "", name, flags=re.IGNORECASE)
             self._attr_name = f"{name} ({'C' if temperature_unit == UnitOfTemperature.CELSIUS else 'F'})"
             self._attr_suggested_unit_of_measurement = temperature_unit
-        elif field_key in {"TempC", "DewPtC"} or (
-            not suffix and sensor.key.startswith("entity_")
-        ):
-            suffix = sensor.measurement_type or sensor.measurement_name
-        measurement_type = (
-            "analog"
-            if sensor.key.startswith("analog_")
-            else suffix
-            or sensor.measurement_type
-            or sensor.measurement_name
-            or "measurement"
-        )
-        self.entity_id = json_entity_id("sensor", f"{device.id}_{measurement_type}")
         if field_key:
             self._attr_icon = FieldSensor.icon_for_field_key(field_key)
             device_class = _FIELD_DEVICE_CLASSES.get(field_key)
@@ -486,14 +474,7 @@ class JsonSensorEntity(IntegrationBlueprintEntity, SensorEntity):
                 in DEVICE_CLASS_UNITS[device_class]
             ):
                 self._attr_device_class = device_class
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device.id)},
-            name=device.name,
-            manufacturer="Geist",
-            model=device.model or None,
-        )
-        if device.serial_number:
-            self._attr_device_info["serial_number"] = device.serial_number
+        self._attr_device_info = json_device_info(device)
 
     @property
     def native_value(self) -> float | None:

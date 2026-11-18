@@ -1,4 +1,5 @@
-"""Types for ha_geist parsed XML data.
+"""
+Types for ha_geist parsed XML data.
 
 Defines TypedDict and dataclass representations for fields and devices
 extracted from the `data.xml` responses.
@@ -7,7 +8,7 @@ extracted from the `data.xml` responses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional, TypedDict
+from typing import Any, TypedDict
 
 
 class ParsedData(TypedDict):
@@ -45,8 +46,8 @@ def unique_alarm_ids(alarms: list[Alarm]) -> list[Alarm]:
 @dataclass
 class Field:
     key: str
-    value: Optional[str]
-    niceName: Optional[str]
+    value: str | None
+    niceName: str | None
 
 
 @dataclass
@@ -56,9 +57,9 @@ class JsonSensor:
     key: str
     name: str
     value: Any
-    unit: Optional[str]
-    measurement_type: Optional[str] = None
-    measurement_name: Optional[str] = None
+    unit: str | None
+    measurement_type: str | None = None
+    measurement_name: str | None = None
 
 
 def is_digital_measurement(sensor: JsonSensor) -> bool:
@@ -75,7 +76,7 @@ class JsonRelay:
     state: str
     on_label: str
     off_label: str
-    mode: Optional[str] = None
+    mode: str | None = None
 
 
 @dataclass
@@ -87,7 +88,8 @@ class JsonDevice:
     model: str
     sensors: list[JsonSensor] = field(default_factory=list)
     relays: list[JsonRelay] = field(default_factory=list)
-    serial_number: Optional[str] = None
+    serial_number: str | None = None
+    via_device_id: str | None = None
 
 
 @dataclass
@@ -120,10 +122,11 @@ def find_alarm(data: object, alarm_id: str) -> Alarm | None:
 class Device:
     id: str
     name: str
-    type: Optional[str] = None
-    available: Optional[str] = None
-    index: Optional[str] = None
-    manufacturer: Optional[str] = None
-    sw_version: Optional[str] = None
-    serial_number: Optional[str] = None
+    type: str | None = None
+    available: str | None = None
+    index: str | None = None
+    manufacturer: str | None = None
+    sw_version: str | None = None
+    serial_number: str | None = None
+    via_device_id: str | None = None
     fields: dict[str, Field] = field(default_factory=dict)

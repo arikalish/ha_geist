@@ -37,6 +37,7 @@ from custom_components.ha_geist.button import GeistAlarmAcknowledgeButton
 from custom_components.ha_geist.button import async_setup_entry as async_setup_buttons
 from custom_components.ha_geist.const import API_TYPE_JSON, CONF_API_TYPE
 from custom_components.ha_geist.coordinator import BlueprintDataUpdateCoordinator
+from custom_components.ha_geist.entity import json_device_info
 from custom_components.ha_geist.exceptions import (
     IntegrationBlueprintApiClientAuthenticationError,
     IntegrationBlueprintApiClientError,
@@ -150,8 +151,8 @@ def system_response(serial: str = "controller-serial") -> FakeResponse:
 class TestApiClients(unittest.TestCase):
     """Validate the XML and JSON API clients."""
 
-    def test_json_entities_use_device_specific_entity_ids(self) -> None:
-        """Identical measurements and relays on different devices have distinct IDs."""
+    def test_json_entities_use_device_specific_unique_ids(self) -> None:
+        """Identical measurements and relays on different devices have distinct unique IDs and use device-based names."""
         data = _parse_devices(
             {
                 device_id: {
@@ -184,18 +185,19 @@ class TestApiClients(unittest.TestCase):
             )
         ]
         self.assertEqual(
-            [entity.entity_id for entity in entities],
+            [entity.unique_id for entity in entities],
             [
-                "sensor.device_1_temperature",
-                "binary_sensor.device_1_digital",
-                "sensor.device_1_analog",
-                "switch.device_1_relay_0",
-                "sensor.device_2_temperature",
-                "binary_sensor.device_2_digital",
-                "sensor.device_2_analog",
-                "switch.device_2_relay_0",
+                "device-1_entity_0_0",
+                "device-1_entity_0_1",
+                "device-1_analog_0",
+                "device-1_relay_0",
+                "device-2_entity_0_0",
+                "device-2_entity_0_1",
+                "device-2_analog_0",
+                "device-2_relay_0",
             ],
         )
+        self.assertTrue(all(entity.has_entity_name for entity in entities))
 
     def test_xml_api_parses_example_data(self) -> None:
         """Legacy data.xml parsing still exposes device fields."""
@@ -216,6 +218,11 @@ class TestApiClients(unittest.TestCase):
         self.assertIsNone(result["devices"][1].sw_version)
         self.assertEqual(result["devices"][0].serial_number, "01D9BCD512000084")
         self.assertEqual(result["devices"][1].serial_number, "EA00000132301A28")
+        self.assertIsNone(result["devices"][0].via_device_id)
+        self.assertEqual(result["devices"][1].via_device_id, "01D9BCD512000084")
+        self.assertEqual(
+            result["devices"][1].name, "Entertainment Center RSM Temp Sensor"
+        )
         self.assertEqual(session.requests[0]["url"], "http://geist.local/data.xml")
 
         coordinator = SimpleNamespace(
@@ -244,7 +251,7 @@ class TestApiClients(unittest.TestCase):
             for entity in entities
         }
         self.assertEqual(versions["Entertainment Center RSM"], "3.16.3")
-        self.assertIsNone(versions["Temp Sensor"])
+        self.assertIsNone(versions["Entertainment Center RSM Temp Sensor"])
 
     def test_xml_debug_log_includes_host_and_friendly_name(self) -> None:
         """Log the configured connection host and XML server name."""
@@ -620,6 +627,7 @@ class TestApiClients(unittest.TestCase):
                     data={CONF_API_TYPE: API_TYPE_JSON},
                     pref_disable_polling=False,
                     pref_disable_new_entities=False,
+                    disabled_by=None,
                     async_on_unload=MagicMock(),
                 )
                 coordinator = SimpleNamespace(
@@ -667,8 +675,10 @@ class TestApiClients(unittest.TestCase):
                 ]
                 listener()
                 await asyncio.gather(*tasks)
-                button = platform.entities["button.device_analog_0_low_3_acknowledge"]
-                other_button = platform.entities["button.other_acknowledge"]
+                button = platform.entities[
+                    "button.acknowledge_analog_low_alarm_limit_65"
+                ]
+                other_button = platform.entities["button.acknowledge_other_alarm"]
                 self.assertEqual(len(platform.entities), 2)
                 self.assertTrue(button.available)
                 await button.async_press()
@@ -780,6 +790,7 @@ class TestApiClients(unittest.TestCase):
                     domain="ha_geist",
                     pref_disable_polling=False,
                     pref_disable_new_entities=False,
+                    disabled_by=None,
                 )
                 hass.config_entries = MagicMock()
                 hass.config_entries.async_get_entry.return_value = config_entry
@@ -832,7 +843,7 @@ class TestApiClients(unittest.TestCase):
                 listener()
                 await asyncio.gather(*tasks)
                 await hass.async_block_till_done()
-                entity_id = "sensor.host_light_low_3_alarm"
+                entity_id = "sensor.light_alarm"
                 self.assertEqual(hass.states.get(entity_id).state, "clear")
                 self.assertIsNotNone(registry.async_get(entity_id))
 
@@ -922,6 +933,7 @@ class TestApiClients(unittest.TestCase):
                     domain="ha_geist",
                     pref_disable_polling=False,
                     pref_disable_new_entities=False,
+                    disabled_by=None,
                     async_on_unload=MagicMock(),
                 )
                 hass.config_entries = MagicMock()
@@ -972,8 +984,8 @@ class TestApiClients(unittest.TestCase):
                 await asyncio.gather(*tasks)
                 await hass.async_block_till_done()
                 self.assertIsNone(registry.async_get(stale.entity_id))
-                first_id = "sensor.device_temp_high_0_alarm"
-                second_id = "sensor.device_temp_low_1_alarm"
+                first_id = "sensor.high_alarm"
+                second_id = "sensor.low_alarm"
                 self.assertIsNotNone(hass.states.get(first_id))
                 self.assertIsNotNone(hass.states.get(second_id))
                 data.alarms = None
@@ -1039,7 +1051,7 @@ class TestApiClients(unittest.TestCase):
                 ]
                 coordinator.async_add_listener.call_args.args[0]()
                 await asyncio.gather(*tasks)
-                sensor = platform.entities["sensor.0_alarm"]
+                sensor = platform.entities["sensor.temperature_low_alarm_limit_10"]
                 state = hass.states.get(sensor.entity_id)
                 self.assertIsNotNone(state)
                 assert state is not None
@@ -1184,6 +1196,7 @@ class TestApiClients(unittest.TestCase):
                     domain="ha_geist",
                     data={CONF_API_TYPE: API_TYPE_JSON},
                     pref_disable_new_entities=False,
+                    disabled_by=None,
                     pref_disable_polling=False,
                     async_on_unload=MagicMock(),
                 )
@@ -1241,10 +1254,10 @@ class TestApiClients(unittest.TestCase):
                 await asyncio.gather(*tasks)
                 await hass.async_block_till_done()
                 self.assertEqual(len(platform.entities), 5)
-                temp_c = platform.entities["sensor.device_tempc"]
-                temp_f = platform.entities["sensor.device_tempf"]
-                dew_c = platform.entities["sensor.device_dewptc"]
-                dew_f = platform.entities["sensor.device_dewptf"]
+                temp_c = platform.entities["sensor.device_temperature_c"]
+                temp_f = platform.entities["sensor.device_temperature_f"]
+                dew_c = platform.entities["sensor.device_dew_point_c"]
+                dew_f = platform.entities["sensor.device_dew_point_f"]
                 self.assertEqual(
                     [temp_c.name, temp_f.name], ["Temperature (C)", "Temperature (F)"]
                 )
@@ -1267,7 +1280,7 @@ class TestApiClients(unittest.TestCase):
                     registry.async_get_entity_id(
                         "sensor", "ha_geist", "device_entity_0_2"
                     ),
-                    "sensor.device_humidity",
+                    "sensor.device_relative_humidity",
                 )
                 data.devices[0].sensors[0].value = "20.123"
                 self.assertEqual(temp_c.native_value, 20.123)
@@ -1302,6 +1315,7 @@ class TestApiClients(unittest.TestCase):
                     domain="ha_geist",
                     data={CONF_API_TYPE: API_TYPE_JSON},
                     pref_disable_new_entities=False,
+                    disabled_by=None,
                     pref_disable_polling=False,
                     async_on_unload=MagicMock(),
                 )
@@ -1373,20 +1387,20 @@ class TestApiClients(unittest.TestCase):
                     self.assertEqual(
                         set(platform.entities),
                         {
-                            "sensor.device_tempc",
-                            "sensor.device_tempc_2",
-                            "sensor.device_tempf",
-                            "sensor.device_tempf_2",
-                            "sensor.device_analog",
+                            "sensor.device_temperature_c",
+                            "sensor.device_temperature_c_2",
+                            "sensor.device_temperature_f",
+                            "sensor.device_temperature_f_2",
+                            "sensor.device_analog_0",
                             "sensor.device_analog_2",
                         },
                     )
                     for entity_id, value in (
-                        ("sensor.device_tempc", 20),
-                        ("sensor.device_tempc_2", 30),
-                        ("sensor.device_tempf", 68),
-                        ("sensor.device_tempf_2", 86),
-                        ("sensor.device_analog", 3),
+                        ("sensor.device_temperature_c", 20),
+                        ("sensor.device_temperature_c_2", 30),
+                        ("sensor.device_temperature_f", 68),
+                        ("sensor.device_temperature_f_2", 86),
+                        ("sensor.device_analog_0", 3),
                         ("sensor.device_analog_2", 7),
                     ):
                         state = hass.states.get(entity_id)
@@ -1417,6 +1431,7 @@ class TestApiClients(unittest.TestCase):
                     domain="ha_geist",
                     data={CONF_API_TYPE: API_TYPE_JSON},
                     pref_disable_new_entities=False,
+                    disabled_by=None,
                     pref_disable_polling=False,
                 )
                 hass.config_entries = MagicMock()
@@ -1706,7 +1721,6 @@ class TestApiClients(unittest.TestCase):
         self.assertEqual(entities[0].name, "Temperature")
         self.assertEqual(entities[1].name, "Dew Point")
         self.assertEqual(entities[2].name, "Relative Humidity")
-        self.assertEqual(entities[2].entity_id, "sensor.device_1_humidity")
         self.assertEqual(entities[2].unique_id, "device-1_entity_0_2")
         self.assertEqual(entities[2].native_value, 30.0)
         self.assertEqual(entities[4].name, "Analog 1")
@@ -1772,19 +1786,6 @@ class TestApiClients(unittest.TestCase):
                 "Volts",
                 "Amps",
                 "Custom light",
-            ],
-        )
-        self.assertEqual(
-            [entity.entity_id for entity in entities],
-            [
-                "sensor.device_humidity",
-                "sensor.device_dewpoint",
-                "sensor.device_light",
-                "sensor.device_airflow",
-                "sensor.device_sound",
-                "sensor.device_volts",
-                "sensor.device_amps",
-                "sensor.device_light",
             ],
         )
 
@@ -2011,6 +2012,29 @@ class TestApiClients(unittest.TestCase):
                 )
                 result = asyncio.run(client.async_get_data())
                 self.assertEqual(result.devices[0].serial_number, "device-1")
+
+    def test_json_attached_devices_are_linked_to_the_host(self) -> None:
+        """Devices other than the matched controller are named after and linked to it."""
+        devices = {
+            "host": {"type": "BB-REL-THA4", "label": "Office"},
+            "sensor": {"type": "ccat", "label": "Digital Sensor"},
+        }
+        session = FakeSession(
+            [login_response(), api_response(devices), system_response()]
+        )
+        client = GeistJsonApiClient(
+            "test-user",
+            "not-a-real-password",
+            session,  # type: ignore[arg-type]
+            "http://geist.local",
+        )
+        host, attached = asyncio.run(client.async_get_data()).devices
+        self.assertIsNone(host.via_device_id)
+        self.assertEqual(host.name, "Office")
+        self.assertEqual(attached.via_device_id, "host")
+        self.assertEqual(attached.name, "Office Digital Sensor")
+        info = json_device_info(attached)
+        self.assertEqual(info["via_device"], ("ha_geist", "host"))
 
     def test_json_system_serial_requires_unique_model(self) -> None:
         """Do not assign a system serial when multiple devices match the model."""

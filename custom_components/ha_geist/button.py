@@ -10,7 +10,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import slugify
 
 from .api_json import GeistJsonApiClient
 from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
@@ -76,9 +75,12 @@ async def async_setup_entry(
 
 
 class GeistAlarmAcknowledgeButton(
-    CoordinatorEntity[BlueprintDataUpdateCoordinator], ButtonEntity
+    CoordinatorEntity[BlueprintDataUpdateCoordinator],
+    ButtonEntity,
 ):
     """Acknowledge a single alarm trigger."""
+
+    _attr_has_entity_name = True
 
     _attr_icon = "mdi:bell-check"
 
@@ -90,7 +92,6 @@ class GeistAlarmAcknowledgeButton(
         self._alarm_id = alarm.id
         self._attr_unique_id = f"{entry_id}_alarm_ack_{alarm.id}"
         self._attr_name = f"Acknowledge {alarm.name}"
-        self.entity_id = f"button.{slugify(alarm.id)}_acknowledge"
         if alarm.device_id:
             self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, alarm.device_id)})
 

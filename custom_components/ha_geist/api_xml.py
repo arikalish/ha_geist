@@ -130,6 +130,12 @@ class IntegrationBlueprintApiClient:
 
                         devices_list.append(d)
 
+                    hosts = [dev for dev in devices_list if dev.index == "0"]
+                    if len(hosts) == 1:
+                        for dev in devices_list:
+                            if dev is not hosts[0]:
+                                dev.via_device_id = hosts[0].id
+                                dev.name = f"{hosts[0].name} {dev.name}".strip()
                     parsed_local["devices"] = devices_list
                     alarms_container = root.find("alarms")
                     if alarms_container is not None:

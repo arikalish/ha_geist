@@ -209,6 +209,10 @@ class GeistJsonApiClient:
                         matches[0].serial_number = serial.strip()
                     elif serial is None or isinstance(serial, str):
                         matches[0].serial_number = matches[0].id
+                    for device in parsed.devices:
+                        if device is not matches[0]:
+                            device.via_device_id = matches[0].id
+                            device.name = f"{matches[0].name} {device.name}"
                 elif system_info_loaded:
                     LOGGER.warning(
                         "Cannot match controller metadata to exactly one device with "

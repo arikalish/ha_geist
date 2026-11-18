@@ -6,10 +6,9 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
-from .entity import IntegrationBlueprintEntity, json_entity_id
+from .const import API_TYPE_JSON, CONF_API_TYPE
+from .entity import IntegrationBlueprintEntity, json_device_info
 from .types import JsonDevice, JsonParsedData, JsonSensor, is_digital_measurement
 
 if TYPE_CHECKING:
@@ -60,15 +59,7 @@ class GeistDigitalInput(IntegrationBlueprintEntity, BinarySensorEntity):
         self._device_id = device.id
         self._sensor_key = sensor.key
         self._attr_unique_id = f"{device.id}_{sensor.key}"
-        self.entity_id = json_entity_id("binary_sensor", f"{device.id}_digital")
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device.id)},
-            name=device.name,
-            manufacturer="Geist",
-            model=device.model or None,
-        )
-        if device.serial_number:
-            self._attr_device_info["serial_number"] = device.serial_number
+        self._attr_device_info = json_device_info(device)
 
     @property
     def is_on(self) -> bool | None:

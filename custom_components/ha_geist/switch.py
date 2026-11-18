@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api_json import GeistJsonApiClient
-from .const import API_TYPE_JSON, CONF_API_TYPE, DOMAIN
+from .const import API_TYPE_JSON, CONF_API_TYPE
 from .coordinator import BlueprintDataUpdateCoordinator
-from .entity import json_entity_id
+from .entity import json_device_info
 from .types import JsonDevice, JsonParsedData, JsonRelay
 
 if TYPE_CHECKING:
@@ -48,8 +47,13 @@ async def async_setup_entry(
     )
 
 
-class GeistRelaySwitch(CoordinatorEntity[BlueprintDataUpdateCoordinator], SwitchEntity):
+class GeistRelaySwitch(
+    CoordinatorEntity[BlueprintDataUpdateCoordinator],
+    SwitchEntity,
+):
     """Control one relay from a Geist JSON API device."""
+
+    _attr_has_entity_name = True
 
     _attr_icon = "mdi:electric-switch"
 
@@ -65,15 +69,7 @@ class GeistRelaySwitch(CoordinatorEntity[BlueprintDataUpdateCoordinator], Switch
         self._relay_index = relay.index
         self._attr_name = relay.name
         self._attr_unique_id = f"{device.id}_relay_{relay.index}"
-        self.entity_id = json_entity_id("switch", self._attr_unique_id)
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device.id)},
-            name=device.name,
-            manufacturer="Geist",
-            model=device.model or None,
-        )
-        if device.serial_number:
-            self._attr_device_info["serial_number"] = device.serial_number
+        self._attr_device_info = json_device_info(device)
 
     @property
     def is_on(self) -> bool:
